@@ -1,16 +1,16 @@
+import lombok.Getter;
 import org.apache.commons.lang3.NotImplementedException;
 import org.yaml.snakeyaml.DumperOptions;
-import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
-import org.yaml.snakeyaml.comments.CommentLine;
-import org.yaml.snakeyaml.constructor.SafeConstructor;
-import org.yaml.snakeyaml.error.Mark;
 import org.yaml.snakeyaml.nodes.*;
 import org.yaml.snakeyaml.representer.Represent;
 import org.yaml.snakeyaml.representer.Representer;
 
 import java.io.StringReader;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 public class FlatYaml implements FlatService {
 
@@ -79,6 +79,10 @@ public class FlatYaml implements FlatService {
 
     @Override
     public String flatToString(Map<String, FileDataItem> data) {
+        if (data == null || data.isEmpty()) {
+            return "";
+        }
+
         Map<String, Object> inputMap = new LinkedHashMap<>();
         for (FileDataItem item : data.values()) {
             inputMap.put(item.getKey(), item.getValue());
@@ -94,7 +98,14 @@ public class FlatYaml implements FlatService {
             putPath(root, parts, 0, value);
         }
 
-        return yaml.dump(root);
+        String dumped = yaml.dump(root);
+
+        String ls = System.lineSeparator();
+        if (!"\n".equals(ls)) {
+            dumped = dumped.replace("\n", ls);
+        }
+
+        return dumped;
     }
 
     @Override
@@ -118,8 +129,8 @@ public class FlatYaml implements FlatService {
         for (NodeTuple tuple : mappingNode.getValue()) {
             String key = ((ScalarNode) tuple.getKeyNode()).getValue();
             String currentKey = parentKey.isEmpty()
-                                ? key
-                                : parentKey + "." + key;
+                    ? key
+                    : parentKey + "." + key;
             result.putAll(flatten(tuple.getValueNode(), currentKey));
         }
     }
@@ -142,7 +153,7 @@ public class FlatYaml implements FlatService {
         String text = scalarNode.getValue();
         Object value;
         if (style == DumperOptions.ScalarStyle.DOUBLE_QUOTED
-            || style == DumperOptions.ScalarStyle.SINGLE_QUOTED) {
+                || style == DumperOptions.ScalarStyle.SINGLE_QUOTED) {
             value = new QuotedString(text);
         } else if (Tag.INT.equals(tag)) {
             try {
@@ -166,7 +177,6 @@ public class FlatYaml implements FlatService {
         result.put(parentKey, value);
     }
 
-
     @SuppressWarnings("unchecked")
     private void putPath(Object container, String[] parts, int index, Object value) {
         String part = parts[index];
@@ -187,8 +197,8 @@ public class FlatYaml implements FlatService {
                 if (child == null) {
                     String nextPart = parts[index + 1];
                     Object newChild = isInteger(nextPart)
-                                      ? new ArrayList<>()
-                                      : new LinkedHashMap<String, Object>();
+                            ? new ArrayList<>()
+                            : new LinkedHashMap<String, Object>();
                     list.set(arrayIndex, newChild);
                     child = newChild;
                 }
@@ -205,8 +215,8 @@ public class FlatYaml implements FlatService {
                 if (child == null) {
                     String nextPart = parts[index + 1];
                     Object newChild = isInteger(nextPart)
-                                      ? new ArrayList<>()
-                                      : new LinkedHashMap<String, Object>();
+                            ? new ArrayList<>()
+                            : new LinkedHashMap<String, Object>();
                     map.put(part, newChild);
                     child = newChild;
                 }
@@ -216,7 +226,9 @@ public class FlatYaml implements FlatService {
     }
 
     private static boolean isInteger(String s) {
-        if (s == null || s.isEmpty()) {return false;}
+        if (s == null || s.isEmpty()) {
+            return false;
+        }
         for (int i = 0; i < s.length(); i++) {
             if (!Character.isDigit(s.charAt(i))) {
                 return false;
