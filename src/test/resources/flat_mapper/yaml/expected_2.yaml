@@ -1,0 +1,16 @@
+server:
+  port: 8080 # comment4
+  name: Apache Tomcat # Information about server
+apiVersion: v1 # comment1
+# comment3
+kind: Service # comment2
+metadata:
+  name: sample-service
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      protocol: TCP
+  selector:
+    app: demo-app
+version: 3.0.0

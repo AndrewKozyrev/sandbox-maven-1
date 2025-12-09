@@ -1,0 +1,41 @@
+# Example YAML file with nested objects and arrays
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-app-pod
+  labels: # This is a nested object (mapping)
+    app: my-app
+    tier: frontend
+spec:
+  containers: # This is a top-level array (sequence) of objects
+    - name: my-container-1 # This is a nested object within the containers array
+      image: nginx:1.14.2
+      ports: # This is an array within the container object
+        - containerPort: 80
+        - containerPort: 443
+      args: # This is another array, a simple list of strings
+        - "--verbose"
+        - "--log-file=stdout"
+    - name: my-container-2
+      image: redis:alpine
+      ports:
+        - containerPort: 6379
+  # A nested object for resource limits
+  resources:
+    limits:
+      cpu: "500m"
+      memory: "128Mi"
+    requests:
+      cpu: "100m"
+      memory: "64Mi"
+# Inline (flow style) array and object example
+# This can be used for compactness, but indentation is more common
+environments:
+  - name: production
+    servers:
+      - prod-web01
+      - prod-db01
+  - name: staging
+    servers:
+      - stage-web01
+      - stage-db01

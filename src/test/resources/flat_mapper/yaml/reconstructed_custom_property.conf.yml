@@ -1,0 +1,17 @@
+# ------------------------------------------------------------------------
+# Файл описывающий значения переменных ФП, используемых утилитой миграции
+# ------------------------------------------------------------------------
+
+egressRootCertAlias: "${ssl.ose.istio.keyStore.RootCertAlias}"
+egressKeyStoreFile: "${ssl.ose.istio.keyStore.egress.KeyStoreFromFile}"
+egressKeyStorePass: "${ssl.ose.istio.keyStore.egress.password}"
+
+#Параметры для шедулеров запускающих процессы валидаций и установок из очереди
+#Периодичность запуска процессов установки из очереди в миллисекундах
+scheduler.install.rate: "15000"
+
+#Периодичность запуска процесса агрегации и отправки сообщений на email
+scheduler.sendEmail.rate: "300000"
+
+# docs: https://confluence.sberbank.ru/pages/viewpage.action?pageId=12347159082
+verification_block_list: { core_b1: [auth, conf, dict, extd, cbro, adbk, fcpc1x, fcpc2x, fcpm1x, fcpm2x, fcpf, fcpr, clob1x, clob2x, oh, moh, uoh1x, uoh2x, och1x, och2x, obp, etc, eagw],core_b3: [auth, conf, dict, extd, cbro, clob1x, clob2x, adbk, fcpc1x, fcpc2x, fcpm1x, fcpm2x, fcpf, fcpr, oh, moh, uoh1x, uoh2x, och1x, och2x, obp, etc, eagw],core_b4: [auth, dict, conf, extd, fcpc1x, fcpc2x, fcpm1x, fcpm2x, fcpf, fcpr, clob1x, clob2x, oh, moh, uoh1x, uoh2x, och1x, och2x, etc, eagw],core_b5: [dict, extd, cbro, conf, auth, clob1x, clob2x, adbk, fcpc1x, fcpc2x, fcpm1x, fcpm2x, fcpf, fcpr, oh, moh, uoh1x, uoh2x, och1x, och2x, obp, etc, eagw],core_b7: [dict, extd, cbro, conf, auth, clob1x, clob2x, fcpc1x, fcpc2x, fcpm1x, fcpm2x, fcpf, fcpr, oh, moh, uoh1x, uoh2x, och1x, och2x, obp, etc, eagw],core_g1: [auth, dict, conf, extd, cbro, clob1x, clob2x, oh, eagw],core_gsi1: [auth, dict, conf, extd, cbro, clob1x, clob2x, oh, eagw],core_s1b1: [auth, dict, conf, cbro, clob1x, etc],core_s1b2: [auth, dict, conf, cbro, clob1x],core_s1s1: [auth, dict, conf, cbro, clob1x, clob2x],core_s1s2: [auth, dict, conf, cbro, clob1x],core_si1: [auth, conf, dict, extd, cbro, clob1x, clob2x, adbk, fcpc1x, fcpc2x, fcpm1x, fcpm2x, fcpf, fcpr, oh, moh, uoh1x, uoh2x, och1x, och2x, obp, eagw],core_si3: [auth, conf, dict, extd, cbro, clob1x, clob2x, adbk, fcpc1x, fcpc2x, fcpm1x, fcpm2x, fcpf, fcpr, oh, moh, uoh1x, uoh2x, och1x, och2x, eagw],ctl_b1: [dict, conf, auth, extd, clob1x],ctl_gf1: [dict, conf, auth, extd, clob1x, ver, esrtpr, blrouter, uoh1x, uoh2x],ctl_m: [dict, conf, auth, extd, ver, esrtpr, blrouter, uoh1x, uoh2x, clob1x, eagui, pers, pers1, pers2, pers3, amgr],ctl_si1: [dict, conf, auth, extd, ver, clobc1x, clob1x, blrouter, esrtpr, uoh1x, uoh2x]}
