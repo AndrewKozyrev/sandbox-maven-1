@@ -54,7 +54,22 @@ public class FlatIni implements FlatService {
                 continue;
             }
 
+            String dataLine = trimmed;
+
             if (currentSection == null) {
+                int eq = dataLine.indexOf('=');
+                if (eq < 0) {
+                    continue;
+                }
+                String key = dataLine.substring(0, eq).trim();
+                String value = dataLine.substring(eq + 1).trim();
+
+                FileDataItem item = new FileDataItem();
+                item.setKey(key);
+                item.setValue(value);
+                result.put(key, item);
+
+                structure.add(LineEntry.globalData(key));
                 continue;
             }
 
@@ -64,7 +79,6 @@ public class FlatIni implements FlatService {
             String flatKey;
             String value;
 
-            String dataLine = trimmed;
             boolean hasWhitespace = containsWhitespace(dataLine);
             boolean isChildrenSection = currentSection.contains(":children");
 
@@ -150,7 +164,7 @@ public class FlatIni implements FlatService {
                             .append(ls);
                     break;
 
-                case DATA:
+                case DATA: {
                     FileDataItem item = data.get(entry.flatKey);
                     if (item == null || item.getKey() == null) {
                         continue;
@@ -158,6 +172,17 @@ public class FlatIni implements FlatService {
                     String line = formatDataLine(entry.flatKey, item);
                     sb.append(line).append(ls);
                     break;
+                }
+
+                case GLOBAL_DATA: {
+                    FileDataItem item = data.get(entry.flatKey);
+                    if (item == null || item.getKey() == null) {
+                        continue;
+                    }
+                    String value = item.getValue() == null ? "" : item.getValue().toString();
+                    sb.append(entry.flatKey).append("=").append(value).append(ls);
+                    break;
+                }
 
                 default:
                     break;
@@ -218,7 +243,8 @@ public class FlatIni implements FlatService {
         EMPTY,
         COMMENT,
         SECTION,
-        DATA
+        DATA,
+        GLOBAL_DATA
     }
 
     private static final class LineEntry {
@@ -248,6 +274,10 @@ public class FlatIni implements FlatService {
 
         static LineEntry data(String sectionName, String flatKey) {
             return new LineEntry(LineType.DATA, sectionName, flatKey, null);
+        }
+
+        static LineEntry globalData(String flatKey) {
+            return new LineEntry(LineType.GLOBAL_DATA, null, flatKey, null);
         }
     }
 }
