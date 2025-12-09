@@ -13,7 +13,6 @@ class FlatYamlTest {
     private static final String EXPECTED_FLAT_FILE_1 = "src/test/resources/flat_mapper/yaml/flattened_1.txt";
     private static final String RECONSTRUCTED_ORIGINAL_1 = "src/test/resources/flat_mapper/yaml/reconstructed_original_1.yaml";
     private static final String EXPECTED_2 = "src/test/resources/flat_mapper/yaml/expected_2.yaml";
-    private static final String EXPECTED_3 = "src/test/resources/flat_mapper/yaml/expected_3.yaml";
 
     private final FlatYaml flatYaml = new FlatYaml();
 

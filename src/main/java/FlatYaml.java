@@ -11,7 +11,6 @@ import org.yaml.snakeyaml.representer.Representer;
 
 import java.io.StringReader;
 import java.util.*;
-import java.util.UUID;
 
 public class FlatYaml implements FlatService {
 
@@ -40,8 +39,8 @@ public class FlatYaml implements FlatService {
         dumpOptions.setIndent(2);
         dumpOptions.setIndicatorIndent(2);
         dumpOptions.setIndentWithIndicator(true);
-        QuotedOnlyRepresenter quotedRep = new QuotedOnlyRepresenter(dumpOptions);
-        this.yamlDump = new Yaml(new SafeConstructor(new LoaderOptions()), quotedRep, dumpOptions);
+        ScalarSpecRepresenter rep = new ScalarSpecRepresenter(dumpOptions);
+        this.yamlDump = new Yaml(new SafeConstructor(new LoaderOptions()), rep, dumpOptions);
 
         LoaderOptions loaderOptionsNoComments = new LoaderOptions();
         loaderOptionsNoComments.setProcessComments(false);
@@ -71,207 +70,18 @@ public class FlatYaml implements FlatService {
         CommentState cs = new CommentState();
         cs.headerComment = extractBlockAndEndComments(root);
 
-        visitNode(root, null, result, null, cs, sourceId);
+        visitNode(root, null, result, null, true, cs, sourceId);
 
         stateById.put(sourceId, cs);
 
         return result;
     }
 
-    @Override
-    public String flatToString(Map<String, FileDataItem> data) {
-        if (data == null || data.isEmpty()) {
-            return "";
-        }
-
-        String sourceId = null;
-        for (FileDataItem item : data.values()) {
-            if (item != null && item.getFilename() != null && !item.getFilename().isBlank()) {
-                sourceId = item.getFilename();
-                break;
-            }
-        }
-
-        CommentState cs = (sourceId == null) ? null : stateById.get(sourceId);
-        String headerComment = cs == null ? null : cs.headerComment;
-        Map<String, String> keyBlockComments = cs == null ? Collections.emptyMap() : cs.keyBlockComments;
-        Map<String, String> keyInlineComments = cs == null ? Collections.emptyMap() : cs.keyInlineComments;
-
-        Map<Object, Object> root = new LinkedHashMap<>();
-        for (Map.Entry<String, FileDataItem> entry : data.entrySet()) {
-            String path = entry.getKey();
-            FileDataItem item = entry.getValue();
-            if (path == null || path.isBlank() || item == null) {
-                continue;
-            }
-            insertValue(root, path, item);
-        }
-
-        String yamlText = yamlDump.dump(root);
-
-        LineIndexes lineIndexes = buildPathLineIndex(yamlText);
-        Map<String, Integer> pathToValueLine = lineIndexes.valueLines;
-        Map<String, Integer> pathToKeyLine = lineIndexes.keyLines;
-
-        Map<Integer, List<String>> commentsByLine = new HashMap<>();
-        Map<Integer, String> inlineCommentsByLine = new HashMap<>();
-
-        for (Map.Entry<String, FileDataItem> entry : data.entrySet()) {
-            String path = entry.getKey();
-            FileDataItem item = entry.getValue();
-            if (item == null) {
-                continue;
-            }
-
-            String comment = item.getComment();
-            if (comment == null || comment.trim().isEmpty()) {
-                continue;
-            }
-
-            Integer lineIndex = pathToValueLine.get(path);
-            if (lineIndex == null || lineIndex < 0) {
-                continue;
-            }
-
-            String[] commentLines = comment.split("\\R");
-            List<String> nonBlank = new ArrayList<String>();
-            for (int i = 0; i < commentLines.length; i++) {
-                String cLine = commentLines[i];
-                if (cLine != null && !cLine.trim().isEmpty()) {
-                    nonBlank.add(cLine.trim());
-                }
-            }
-            if (nonBlank.isEmpty()) {
-                continue;
-            }
-
-            if (nonBlank.size() == 1) {
-                inlineCommentsByLine.put(lineIndex, "# " + nonBlank.get(0));
-            } else {
-                List<String> list = commentsByLine.computeIfAbsent(lineIndex, k -> new ArrayList<>());
-                for (int i = 0; i < nonBlank.size(); i++) {
-                    list.add("# " + nonBlank.get(i));
-                }
-            }
-        }
-
-        for (Map.Entry<String, String> entry : keyBlockComments.entrySet()) {
-            String path = entry.getKey();
-            String comment = entry.getValue();
-            if (comment == null || comment.trim().isEmpty()) {
-                continue;
-            }
-
-            Integer lineIndex = pathToKeyLine.get(path);
-            if (lineIndex == null || lineIndex < 0) {
-                continue;
-            }
-
-            List<String> list = commentsByLine.computeIfAbsent(lineIndex, k -> new ArrayList<>());
-
-            String[] commentLines = comment.split("\\R");
-            for (int i = 0; i < commentLines.length; i++) {
-                String cLine = commentLines[i];
-                if (cLine == null || cLine.trim().isEmpty()) {
-                    continue;
-                }
-                list.add("# " + cLine.trim());
-            }
-        }
-
-        for (Map.Entry<String, String> entry : keyInlineComments.entrySet()) {
-            String path = entry.getKey();
-            String comment = entry.getValue();
-            if (comment == null || comment.trim().isEmpty()) {
-                continue;
-            }
-
-            Integer lineIndex = pathToKeyLine.get(path);
-            if (lineIndex == null || lineIndex < 0) {
-                continue;
-            }
-
-            String[] commentLines = comment.split("\\R");
-            String first = null;
-            for (int i = 0; i < commentLines.length && first == null; i++) {
-                String cLine = commentLines[i];
-                if (cLine != null && !cLine.trim().isEmpty()) {
-                    first = cLine.trim();
-                }
-            }
-            if (first == null) {
-                continue;
-            }
-
-            inlineCommentsByLine.put(lineIndex, "# " + first);
-        }
-
-        if (headerComment != null && !headerComment.trim().isEmpty()) {
-            int minKeyLine = Integer.MAX_VALUE;
-            for (Integer v : pathToKeyLine.values()) {
-                if (v != null && v < minKeyLine) {
-                    minKeyLine = v;
-                }
-            }
-            if (minKeyLine == Integer.MAX_VALUE) {
-                minKeyLine = 0;
-            }
-
-            List<String> list = commentsByLine.computeIfAbsent(minKeyLine, k -> new ArrayList<>());
-
-            String[] headerLines = headerComment.split("\\R");
-            for (String hLine : headerLines) {
-                if (hLine == null || hLine.trim().isEmpty()) {
-                    continue;
-                }
-                list.add("# " + hLine.trim());
-            }
-        }
-
-        String[] lines = yamlText.split("\\R", -1);
-        String ls = System.lineSeparator();
-        StringBuilder sb = new StringBuilder();
-
-        for (int i = 0; i < lines.length; i++) {
-            String line = lines[i];
-
-            int pos = 0;
-            while (pos < line.length() && Character.isWhitespace(line.charAt(pos))) {
-                pos++;
-            }
-            String indent = line.substring(0, pos);
-
-            List<String> cl = commentsByLine.get(i);
-            if (cl != null) {
-                for (String c : cl) {
-                    sb.append(indent).append(c).append(ls);
-                }
-            }
-
-            String inline = inlineCommentsByLine.get(i);
-            if (inline != null) {
-                sb.append(line).append(" ").append(inline);
-            } else {
-                sb.append(line);
-            }
-
-            if (i < lines.length - 1) {
-                sb.append(ls);
-            }
-        }
-
-        return sb.toString();
-    }
-
-    @Override
-    public void validate(Map<String, FileDataItem> data) {
-        throw new NotImplementedException("Validation is not implemented");
-    }
-
     private void visitNode(Node node,
                            String currentPath,
                            Map<String, FileDataItem> out,
                            String inheritedComment,
+                           boolean inheritOnlyOnce,
                            CommentState cs,
                            String sourceId) {
 
@@ -308,14 +118,14 @@ public class FlatYaml implements FlatService {
                 String ownComments = extractComments(valueNode);
                 String commentsForChild = mergeComments(remainingInherited, ownComments);
 
-                if (remainingInherited != null && !remainingInherited.trim().isEmpty()) {
+                if (inheritOnlyOnce && remainingInherited != null && !remainingInherited.trim().isEmpty()) {
                     remainingInherited = null;
                 }
 
                 if (valueNode instanceof ScalarNode) {
-                    createItem(childPath, sourceId, (ScalarNode) valueNode, commentsForChild, out);
+                    createItem(childPath, sourceId, (ScalarNode) valueNode, commentsForChild, out, cs);
                 } else {
-                    visitNode(valueNode, childPath, out, commentsForChild, cs, sourceId);
+                    visitNode(valueNode, childPath, out, commentsForChild, true, cs, sourceId);
                 }
             }
         } else if (node instanceof SequenceNode) {
@@ -333,14 +143,14 @@ public class FlatYaml implements FlatService {
                 String ownComments = extractComments(child);
                 String commentsForChild = mergeComments(remainingInherited, ownComments);
 
-                if (remainingInherited != null && !remainingInherited.trim().isEmpty()) {
+                if (inheritOnlyOnce && remainingInherited != null && !remainingInherited.trim().isEmpty()) {
                     remainingInherited = null;
                 }
 
                 if (child instanceof ScalarNode) {
-                    createItem(childPath, sourceId, (ScalarNode) child, commentsForChild, out);
+                    createItem(childPath, sourceId, (ScalarNode) child, commentsForChild, out, cs);
                 } else {
-                    visitNode(child, childPath, out, commentsForChild, cs, sourceId);
+                    visitNode(child, childPath, out, commentsForChild, true, cs, sourceId);
                 }
             }
         } else if (node instanceof ScalarNode) {
@@ -348,7 +158,7 @@ public class FlatYaml implements FlatService {
             String ownComments = extractComments(node);
             String comments = mergeComments(inheritedComment, ownComments);
             String path = (currentPath == null) ? "" : currentPath;
-            createItem(path, sourceId, scalarNode, comments, out);
+            createItem(path, sourceId, scalarNode, comments, out, cs);
         }
     }
 
@@ -356,7 +166,8 @@ public class FlatYaml implements FlatService {
                             String sourceId,
                             ScalarNode scalarNode,
                             String comments,
-                            Map<String, FileDataItem> out) {
+                            Map<String, FileDataItem> out,
+                            CommentState cs) {
 
         FileDataItem item = new FileDataItem();
         item.setKey(path);
@@ -366,47 +177,25 @@ public class FlatYaml implements FlatService {
         item.setValue(constructScalarValue(scalarNode));
 
         out.put(path, item);
+
+        if (path != null && !path.isEmpty()) {
+            Tag tag = scalarNode.getTag();
+            DumperOptions.ScalarStyle style = scalarNode.getScalarStyle();
+            cs.scalarStyles.put(path, new ScalarStyleInfo(tag, style));
+        }
     }
 
-    private Object constructScalarValue(ScalarNode scalar) {
-        Tag tag = scalar.getTag();
+    private String constructScalarValue(ScalarNode scalar) {
         String value = scalar.getValue();
-
-        if (Tag.NULL.equals(tag)) {
-            return null;
-        }
-
-        if (Tag.INT.equals(tag)) {
-            try {
-                return Integer.parseInt(value);
-            } catch (NumberFormatException e) {
-                try {
-                    return Long.parseLong(value);
-                } catch (NumberFormatException ignored) {
-                    return value;
-                }
-            }
-        }
-
-        if (Tag.FLOAT.equals(tag)) {
-            try {
-                return Double.parseDouble(value);
-            } catch (NumberFormatException e) {
-                return value;
-            }
-        }
-
-        if (Tag.BOOL.equals(tag)) {
-            return Boolean.parseBoolean(value);
-        }
-
         DumperOptions.ScalarStyle style = scalar.getScalarStyle();
-        if (style == DumperOptions.ScalarStyle.DOUBLE_QUOTED
-                || style == DumperOptions.ScalarStyle.SINGLE_QUOTED) {
-            return new QuotedString(value);
-        }
 
-        return value;
+        if (style == DumperOptions.ScalarStyle.DOUBLE_QUOTED) {
+            return "\"" + value + "\"";
+        } else if (style == DumperOptions.ScalarStyle.SINGLE_QUOTED) {
+            return "'" + value + "'";
+        } else {
+            return value;
+        }
     }
 
     private String extractComments(Node node) {
@@ -528,15 +317,208 @@ public class FlatYaml implements FlatService {
         return parent.trim() + System.lineSeparator() + own.trim();
     }
 
+    @Override
+    public String flatToString(Map<String, FileDataItem> data) {
+        if (data == null || data.isEmpty()) {
+            return "";
+        }
+
+        String sourceId = null;
+        for (FileDataItem item : data.values()) {
+            if (item != null && item.getFilename() != null && !item.getFilename().isBlank()) {
+                sourceId = item.getFilename();
+                break;
+            }
+        }
+
+        CommentState cs = (sourceId == null) ? null : stateById.get(sourceId);
+        String headerComment = cs == null ? null : cs.headerComment;
+        Map<String, String> keyBlockComments =
+                cs == null ? Collections.emptyMap() : cs.keyBlockComments;
+        Map<String, String> keyInlineComments =
+                cs == null ? Collections.emptyMap() : cs.keyInlineComments;
+
+        Map<Object, Object> root = new LinkedHashMap<>();
+        for (Map.Entry<String, FileDataItem> entry : data.entrySet()) {
+            String path = entry.getKey();
+            FileDataItem item = entry.getValue();
+            if (path == null || path.isBlank() || item == null) {
+                continue;
+            }
+            insertValue(root, path, item, cs);
+        }
+
+        String yamlText = yamlDump.dump(root);
+
+        LineIndexes lineIndexes = buildPathLineIndex(yamlText);
+        Map<String, Integer> pathToValueLine = lineIndexes.valueLines;
+        Map<String, Integer> pathToKeyLine = lineIndexes.keyLines;
+
+        Map<Integer, List<String>> commentsByLine = new HashMap<>();
+        Map<Integer, String> inlineCommentsByLine = new HashMap<>();
+
+        for (Map.Entry<String, FileDataItem> entry : data.entrySet()) {
+            String path = entry.getKey();
+            FileDataItem item = entry.getValue();
+            if (item == null) {
+                continue;
+            }
+
+            String comment = item.getComment();
+            if (comment == null || comment.trim().isEmpty()) {
+                continue;
+            }
+
+            Integer lineIndex = pathToValueLine.get(path);
+            if (lineIndex == null || lineIndex < 0) {
+                continue;
+            }
+
+            String[] commentLines = comment.split("\\R");
+            List<String> nonBlank = new ArrayList<String>();
+            for (String cLine : commentLines) {
+                if (cLine != null && !cLine.trim().isEmpty()) {
+                    nonBlank.add(cLine.trim());
+                }
+            }
+            if (nonBlank.isEmpty()) {
+                continue;
+            }
+
+            if (nonBlank.size() == 1) {
+                inlineCommentsByLine.put(lineIndex, "# " + nonBlank.get(0));
+            } else {
+                List<String> list = commentsByLine.computeIfAbsent(lineIndex, k -> new ArrayList<>());
+                for (String s : nonBlank) {
+                    list.add("# " + s);
+                }
+            }
+        }
+
+        for (Map.Entry<String, String> entry : keyBlockComments.entrySet()) {
+            String path = entry.getKey();
+            String comment = entry.getValue();
+            if (comment == null || comment.trim().isEmpty()) {
+                continue;
+            }
+
+            Integer lineIndex = pathToKeyLine.get(path);
+            if (lineIndex == null || lineIndex < 0) {
+                continue;
+            }
+
+            List<String> list = commentsByLine.computeIfAbsent(lineIndex, k -> new ArrayList<>());
+
+            String[] commentLines = comment.split("\\R");
+            for (String cLine : commentLines) {
+                if (cLine == null || cLine.trim().isEmpty()) {
+                    continue;
+                }
+                list.add("# " + cLine.trim());
+            }
+        }
+
+        for (Map.Entry<String, String> entry : keyInlineComments.entrySet()) {
+            String path = entry.getKey();
+            String comment = entry.getValue();
+            if (comment == null || comment.trim().isEmpty()) {
+                continue;
+            }
+
+            Integer lineIndex = pathToKeyLine.get(path);
+            if (lineIndex == null || lineIndex < 0) {
+                continue;
+            }
+
+            String[] commentLines = comment.split("\\R");
+            String first = null;
+            for (int i = 0; i < commentLines.length && first == null; i++) {
+                String cLine = commentLines[i];
+                if (cLine != null && !cLine.trim().isEmpty()) {
+                    first = cLine.trim();
+                }
+            }
+            if (first == null) {
+                continue;
+            }
+
+            inlineCommentsByLine.put(lineIndex, "# " + first);
+        }
+
+        if (headerComment != null && !headerComment.trim().isEmpty()) {
+            int minKeyLine = Integer.MAX_VALUE;
+            for (Integer v : pathToKeyLine.values()) {
+                if (v != null && v < minKeyLine) {
+                    minKeyLine = v;
+                }
+            }
+            if (minKeyLine == Integer.MAX_VALUE) {
+                minKeyLine = 0;
+            }
+
+            List<String> list = commentsByLine.computeIfAbsent(minKeyLine, k -> new ArrayList<>());
+
+            String[] headerLines = headerComment.split("\\R");
+            for (String hLine : headerLines) {
+                if (hLine == null || hLine.trim().isEmpty()) {
+                    continue;
+                }
+                list.add("# " + hLine.trim());
+            }
+        }
+
+        String[] lines = yamlText.split("\\R", -1);
+        String ls = System.lineSeparator();
+        StringBuilder sb = new StringBuilder();
+
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+
+            int pos = 0;
+            while (pos < line.length() && Character.isWhitespace(line.charAt(pos))) {
+                pos++;
+            }
+            String indent = line.substring(0, pos);
+
+            List<String> cl = commentsByLine.get(i);
+            if (cl != null) {
+                for (String c : cl) {
+                    sb.append(indent).append(c).append(ls);
+                }
+            }
+
+            String inline = inlineCommentsByLine.get(i);
+            if (inline != null) {
+                sb.append(line).append(" ").append(inline);
+            } else {
+                sb.append(line);
+            }
+
+            if (i < lines.length - 1) {
+                sb.append(ls);
+            }
+        }
+
+        return sb.toString();
+    }
+
+    @Override
+    public void validate(Map<String, FileDataItem> data) {
+        throw new NotImplementedException("Validation is not implemented");
+    }
+
     @SuppressWarnings("unchecked")
-    private void insertValue(Map<Object, Object> root, String path, FileDataItem item) {
+    private void insertValue(Map<Object, Object> root,
+                             String path,
+                             FileDataItem item,
+                             CommentState cs) {
         List<PathToken> tokens = parsePath(path);
         if (tokens.isEmpty()) {
             return;
         }
 
         Object container = root;
-        Object value = wrapValue(item.getValue());
+        Object value = wrapValue(path, (String) item.getValue(), cs);
 
         for (int i = 0; i < tokens.size(); i++) {
             PathToken token = tokens.get(i);
@@ -591,8 +573,27 @@ public class FlatYaml implements FlatService {
         }
     }
 
-    private Object wrapValue(Object v) {
-        return v;
+    private Object wrapValue(String path, String v, CommentState cs) {
+        if (cs == null) {
+            return v;
+        }
+        ScalarStyleInfo info = cs.scalarStyles.get(path);
+        if (info == null) {
+            return v;
+        }
+
+        String raw = v;
+        if (v != null && v.length() >= 2) {
+            if (info.style == DumperOptions.ScalarStyle.DOUBLE_QUOTED
+                    && v.startsWith("\"") && v.endsWith("\"")) {
+                raw = v.substring(1, v.length() - 1);
+            } else if (info.style == DumperOptions.ScalarStyle.SINGLE_QUOTED
+                    && v.startsWith("'") && v.endsWith("'")) {
+                raw = v.substring(1, v.length() - 1);
+            }
+        }
+
+        return new ScalarSpec(raw, info.tag, info.style);
     }
 
     private List<PathToken> parsePath(String path) {
@@ -745,41 +746,51 @@ public class FlatYaml implements FlatService {
         }
     }
 
+    private static final class ScalarStyleInfo {
+        final Tag tag;
+        final DumperOptions.ScalarStyle style;
+
+        ScalarStyleInfo(Tag tag, DumperOptions.ScalarStyle style) {
+            this.tag = tag;
+            this.style = style;
+        }
+    }
+
     private static final class CommentState {
         String headerComment;
         final Map<String, String> keyBlockComments = new HashMap<>();
         final Map<String, String> keyInlineComments = new HashMap<>();
+        final Map<String, ScalarStyleInfo> scalarStyles = new HashMap<>();
     }
 
-    private static final class QuotedString {
-        private final String value;
+    private static final class ScalarSpec {
+        final String value;
+        final Tag tag;
+        final DumperOptions.ScalarStyle style;
 
-        private QuotedString(String value) {
+        ScalarSpec(String value, Tag tag, DumperOptions.ScalarStyle style) {
             this.value = value;
-        }
-
-        String getValue() {
-            return value;
-        }
-
-        @Override
-        public String toString() {
-            return "\"" + value + "\"";
+            this.tag = tag;
+            this.style = style;
         }
     }
 
-    private static class QuotedOnlyRepresenter extends Representer {
+    private static class ScalarSpecRepresenter extends Representer {
 
-        QuotedOnlyRepresenter(DumperOptions options) {
+        ScalarSpecRepresenter(DumperOptions options) {
             super(options);
-            this.representers.put(QuotedString.class, new RepresentQuotedString());
+            this.representers.put(ScalarSpec.class, new RepresentScalarSpec());
         }
 
-        private class RepresentQuotedString implements Represent {
+        private class RepresentScalarSpec implements Represent {
             @Override
             public Node representData(Object data) {
-                QuotedString qs = (QuotedString) data;
-                return representScalar(Tag.STR, qs.getValue(), DumperOptions.ScalarStyle.DOUBLE_QUOTED);
+                ScalarSpec s = (ScalarSpec) data;
+                Tag tag = (s.tag != null) ? s.tag : Tag.STR;
+                DumperOptions.ScalarStyle style =
+                        (s.style != null) ? s.style : DumperOptions.ScalarStyle.PLAIN;
+                String value = (s.value == null) ? "" : s.value;
+                return representScalar(tag, value, style);
             }
         }
     }
