@@ -1,8 +1,12 @@
-import lombok.Getter;
 import org.apache.commons.lang3.NotImplementedException;
 import org.yaml.snakeyaml.DumperOptions;
 import org.yaml.snakeyaml.Yaml;
-import org.yaml.snakeyaml.nodes.*;
+import org.yaml.snakeyaml.nodes.MappingNode;
+import org.yaml.snakeyaml.nodes.Node;
+import org.yaml.snakeyaml.nodes.NodeTuple;
+import org.yaml.snakeyaml.nodes.ScalarNode;
+import org.yaml.snakeyaml.nodes.SequenceNode;
+import org.yaml.snakeyaml.nodes.Tag;
 import org.yaml.snakeyaml.representer.Represent;
 import org.yaml.snakeyaml.representer.Representer;
 
@@ -24,56 +28,67 @@ public class FlatYaml implements FlatService {
         options.setIndicatorIndent(2);
         options.setIndentWithIndicator(true);
 
-        Representer representer = new QuotedRepresenter(options);
+        Representer representer = new ScalarSpecRepresenter(options);
         this.yaml = new Yaml(representer, options);
     }
 
-    @Getter
-    private static final class QuotedString {
-        private final String value;
+    private static final class ScalarSpec {
+        final String value;
+        final DumperOptions.ScalarStyle style;
+        final Tag tag;
 
-        QuotedString(String value) {
+        ScalarSpec(String value, DumperOptions.ScalarStyle style, Tag tag) {
             this.value = value;
-        }
-
-        @Override
-        public String toString() {
-            return "\"" + value + "\"";
+            this.style = style;
+            this.tag = tag;
         }
     }
 
-    private static final class QuotedRepresenter extends Representer {
-        QuotedRepresenter(DumperOptions options) {
+    private static final class ScalarSpecRepresenter extends Representer {
+        ScalarSpecRepresenter(DumperOptions options) {
             super(options);
-            this.representers.put(QuotedString.class, new RepresentQuotedString());
+            this.representers.put(ScalarSpec.class, new RepresentScalarSpec());
         }
 
-        private static class RepresentQuotedString implements Represent {
+        private class RepresentScalarSpec implements Represent {
             @Override
             public Node representData(Object data) {
-                QuotedString qs = (QuotedString) data;
-                return new ScalarNode(
-                        Tag.STR,
-                        qs.getValue(),
-                        null,
-                        null,
-                        DumperOptions.ScalarStyle.DOUBLE_QUOTED
-                );
+                ScalarSpec s = (ScalarSpec) data;
+                String v = (s.value == null) ? "" : s.value;
+                DumperOptions.ScalarStyle st =
+                        (s.style == null) ? DumperOptions.ScalarStyle.PLAIN : s.style;
+                Tag t = (s.tag == null) ? Tag.STR : s.tag;
+                return representScalar(t, v, st);
             }
         }
     }
 
     @Override
     public Map<String, FileDataItem> flatToMap(String data) {
-        Node rootNode = yaml.compose(new StringReader(data));
         Map<String, FileDataItem> flatData = new LinkedHashMap<>();
-        Map<String, Object> flatDataRaw = flatten(rootNode, "");
-        for (Map.Entry<String, Object> item : flatDataRaw.entrySet()) {
-            FileDataItem f = new FileDataItem();
-            f.setKey(item.getKey());
-            f.setValue(item.getValue());
-            flatData.put(item.getKey(), f);
+
+        if (data == null || data.isBlank()) {
+            return flatData;
         }
+
+        Node rootNode = yaml.compose(new StringReader(data));
+        if (rootNode == null) {
+            return flatData;
+        }
+
+        Map<String, Object> flatDataRaw = flatten(rootNode, "");
+        for (Map.Entry<String, Object> entry : flatDataRaw.entrySet()) {
+            String path = entry.getKey();
+            Object raw = entry.getValue();
+            String valueStr = (raw == null) ? null : raw.toString();
+
+            FileDataItem f = new FileDataItem();
+            f.setKey(path);
+            f.setPath(path);
+            f.setValue(valueStr);
+            flatData.put(path, f);
+        }
+
         return flatData;
     }
 
@@ -85,7 +100,17 @@ public class FlatYaml implements FlatService {
 
         Map<String, Object> inputMap = new LinkedHashMap<>();
         for (FileDataItem item : data.values()) {
-            inputMap.put(item.getKey(), item.getValue());
+            if (item == null) {
+                continue;
+            }
+            String key = item.getKey();
+            if (key == null) {
+                continue;
+            }
+            Object raw = item.getValue();
+            String str = (raw == null) ? "" : raw.toString();
+            ScalarSpec spec = parseScalarSpec(str);
+            inputMap.put(key, spec);
         }
 
         Map<String, Object> root = new LinkedHashMap<>();
@@ -93,8 +118,10 @@ public class FlatYaml implements FlatService {
         for (Map.Entry<String, Object> entry : inputMap.entrySet()) {
             String key = entry.getKey();
             Object value = entry.getValue();
+
             String normalizedKey = key.replaceAll("\\[(\\d+)]", ".$1");
             String[] parts = normalizedKey.split("\\.");
+
             putPath(root, parts, 0, value);
         }
 
@@ -125,20 +152,34 @@ public class FlatYaml implements FlatService {
         return result;
     }
 
-    private void processMappingNode(Map<String, Object> result, MappingNode mappingNode, String parentKey) {
-        for (NodeTuple tuple : mappingNode.getValue()) {
-            String key = ((ScalarNode) tuple.getKeyNode()).getValue();
+    private void processMappingNode(Map<String, Object> result,
+                                    MappingNode mappingNode,
+                                    String parentKey) {
+        List<NodeTuple> tuples = mappingNode.getValue();
+        for (NodeTuple tuple : tuples) {
+            Node keyNode = tuple.getKeyNode();
+            Node valueNode = tuple.getValueNode();
+
+            if (!(keyNode instanceof ScalarNode)) {
+                continue;
+            }
+
+            String key = ((ScalarNode) keyNode).getValue();
             String currentKey = parentKey.isEmpty()
                     ? key
                     : parentKey + "." + key;
-            result.putAll(flatten(tuple.getValueNode(), currentKey));
+
+            result.putAll(flatten(valueNode, currentKey));
         }
     }
 
-    private void processSequenceNode(Map<String, Object> result, SequenceNode sequenceNode, String parentKey) {
-        int index = 0;
-        for (Node item : sequenceNode.getValue()) {
-            String currentKey = parentKey + "[" + index++ + "]";
+    private void processSequenceNode(Map<String, Object> result,
+                                     SequenceNode sequenceNode,
+                                     String parentKey) {
+        List<Node> nodes = sequenceNode.getValue();
+        for (int i = 0; i < nodes.size(); i++) {
+            Node item = nodes.get(i);
+            String currentKey = parentKey + "[" + i + "]";
             if (item instanceof ScalarNode) {
                 addScalarNode(result, (ScalarNode) item, currentKey);
             } else {
@@ -147,34 +188,63 @@ public class FlatYaml implements FlatService {
         }
     }
 
-    private void addScalarNode(Map<String, Object> result, ScalarNode scalarNode, String parentKey) {
+    private void addScalarNode(Map<String, Object> result,
+                               ScalarNode scalarNode,
+                               String parentKey) {
         DumperOptions.ScalarStyle style = scalarNode.getScalarStyle();
-        Tag tag = scalarNode.getTag();
         String text = scalarNode.getValue();
-        Object value;
-        if (style == DumperOptions.ScalarStyle.DOUBLE_QUOTED
-                || style == DumperOptions.ScalarStyle.SINGLE_QUOTED) {
-            value = new QuotedString(text);
-        } else if (Tag.INT.equals(tag)) {
-            try {
-                value = Integer.parseInt(text);
-            } catch (NumberFormatException e) {
-                try {
-                    value = Long.parseLong(text);
-                } catch (NumberFormatException ex) {
-                    value = text;
-                }
-            }
-        } else if (Tag.FLOAT.equals(tag)) {
-            try {
-                value = Double.parseDouble(text);
-            } catch (NumberFormatException e) {
-                value = text;
-            }
+        String value;
+        if (style == DumperOptions.ScalarStyle.DOUBLE_QUOTED) {
+            value = "\"" + text + "\"";
+        } else if (style == DumperOptions.ScalarStyle.SINGLE_QUOTED) {
+            value = "'" + text + "'";
         } else {
             value = text;
         }
         result.put(parentKey, value);
+    }
+
+    private ScalarSpec parseScalarSpec(String bare) {
+        if (bare == null) {
+            return new ScalarSpec("", DumperOptions.ScalarStyle.PLAIN, Tag.STR);
+        }
+
+        if (bare.length() >= 2 && bare.startsWith("\"") && bare.endsWith("\"")) {
+            String raw = bare.substring(1, bare.length() - 1);
+            return new ScalarSpec(raw, DumperOptions.ScalarStyle.DOUBLE_QUOTED, Tag.STR);
+        }
+
+        if (bare.length() >= 2 && bare.startsWith("'") && bare.endsWith("'")) {
+            String raw = bare.substring(1, bare.length() - 1);
+            return new ScalarSpec(raw, DumperOptions.ScalarStyle.SINGLE_QUOTED, Tag.STR);
+        }
+
+        Tag tag;
+        if (isIntegerLiteral(bare)) {
+            tag = Tag.INT;
+        } else {
+            tag = Tag.STR;
+        }
+        return new ScalarSpec(bare, DumperOptions.ScalarStyle.PLAIN, tag);
+    }
+
+    private boolean isIntegerLiteral(String s) {
+        if (s == null || s.isEmpty()) {
+            return false;
+        }
+        int start = 0;
+        if (s.charAt(0) == '-' || s.charAt(0) == '+') {
+            if (s.length() == 1) {
+                return false;
+            }
+            start = 1;
+        }
+        for (int i = start; i < s.length(); i++) {
+            if (!Character.isDigit(s.charAt(i))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     @SuppressWarnings("unchecked")
