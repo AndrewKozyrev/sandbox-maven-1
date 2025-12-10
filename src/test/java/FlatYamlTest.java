@@ -14,6 +14,7 @@ class FlatYamlTest {
     private static final String EXPECTED_1 = "src/test/resources/flat_mapper/yaml/expected_1.yaml";
     private static final String EXPECTED_2 = "src/test/resources/flat_mapper/yaml/expected_2.yaml";
     private static final String INPUT_2 = "src/test/resources/flat_mapper/yaml/input_2.yaml";
+    private static final String INPUT_4 = "src/test/resources/flat_mapper/yaml/input_4.yaml";
     private static final String EXPECTED_3 = "src/test/resources/flat_mapper/yaml/expected_3.yaml";
 
     private final FlatYaml flatYaml = new FlatYaml();
@@ -88,4 +89,12 @@ class FlatYamlTest {
         assertEquals(expected, actual);
     }
 
+    @Test
+    void flatToMap_exclamationMark() throws Exception {
+        var inputData = Files.readString(Paths.get(INPUT_4));
+        var items = flatYaml.flatToMap(inputData);
+
+        assertEquals("!\"value1\"", items.get("param1").getValue());
+        assertEquals("\"value2\"", items.get("param2").getValue());
+    }
 }

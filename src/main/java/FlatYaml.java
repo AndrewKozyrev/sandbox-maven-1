@@ -71,7 +71,9 @@ public class FlatYaml implements FlatService {
             return flatData;
         }
 
-        Node rootNode = yaml.compose(new StringReader(data));
+        String preprocessed = preprocessExclamationScalars(data);
+
+        Node rootNode = yaml.compose(new StringReader(preprocessed));
         if (rootNode == null) {
             return flatData;
         }
@@ -202,7 +204,15 @@ public class FlatYaml implements FlatService {
         String text = scalarNode.getValue();
         String value;
         if (style == DumperOptions.ScalarStyle.DOUBLE_QUOTED) {
-            value = "\"" + text + "\"";
+            String normalized = text.replace("\\\"", "\"");
+            if (normalized.length() >= 4
+                    && normalized.charAt(0) == '!'
+                    && normalized.charAt(1) == '"'
+                    && normalized.charAt(normalized.length() - 1) == '"') {
+                value = normalized;
+            } else {
+                value = "\"" + normalized + "\"";
+            }
         } else if (style == DumperOptions.ScalarStyle.SINGLE_QUOTED) {
             value = "'" + text + "'";
         } else {
@@ -226,8 +236,11 @@ public class FlatYaml implements FlatService {
             return new ScalarSpec(raw, DumperOptions.ScalarStyle.SINGLE_QUOTED, Tag.STR);
         }
 
-        if (bare.length() >= 3 && bare.startsWith("!\"") && bare.endsWith("\"")) {
-            String placeholder = "___EXCL__" + specials.size() + "___";
+        if (bare.length() >= 4
+                && bare.charAt(0) == '!'
+                && bare.charAt(1) == '"'
+                && bare.charAt(bare.length() - 1) == '"') {
+            String placeholder = "EXCL_" + specials.size();
             specials.put(placeholder, bare);
             return new ScalarSpec(placeholder, DumperOptions.ScalarStyle.PLAIN, Tag.STR);
         }
@@ -319,5 +332,47 @@ public class FlatYaml implements FlatService {
             }
         }
         return true;
+    }
+
+    private String preprocessExclamationScalars(String data) {
+        String[] lines = data.split("\\R", -1);
+        StringBuilder sb = new StringBuilder();
+        String ls = "\n";
+
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            sb.append(preprocessExclamationLine(line));
+            if (i < lines.length - 1) {
+                sb.append(ls);
+            }
+        }
+
+        return sb.toString();
+    }
+
+    private String preprocessExclamationLine(String line) {
+        int colonIdx = line.indexOf(':');
+        if (colonIdx < 0) {
+            return line;
+        }
+
+        String before = line.substring(0, colonIdx + 1);
+        String after = line.substring(colonIdx + 1);
+        String trimmed = after.trim();
+
+        if (!trimmed.startsWith("!\"")) {
+            return line;
+        }
+
+        int i = 0;
+        while (i < after.length() && Character.isWhitespace(after.charAt(i))) {
+            i++;
+        }
+        String spaces = after.substring(0, i);
+
+        String escaped = trimmed.replace("\"", "\\\"");
+        String normalized = "\"" + escaped + "\"";
+
+        return before + spaces + normalized;
     }
 }
