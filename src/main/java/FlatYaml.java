@@ -98,6 +98,7 @@ public class FlatYaml implements FlatService {
             return "";
         }
 
+        Map<String, String> specials = new LinkedHashMap<>();
         Map<String, Object> inputMap = new LinkedHashMap<>();
         for (FileDataItem item : data.values()) {
             if (item == null) {
@@ -109,7 +110,7 @@ public class FlatYaml implements FlatService {
             }
             Object raw = item.getValue();
             String str = (raw == null) ? "" : raw.toString();
-            ScalarSpec spec = parseScalarSpec(str);
+            ScalarSpec spec = parseScalarSpec(str, specials);
             inputMap.put(key, spec);
         }
 
@@ -126,6 +127,12 @@ public class FlatYaml implements FlatService {
         }
 
         String dumped = yaml.dump(root);
+
+        for (Map.Entry<String, String> e : specials.entrySet()) {
+            String placeholder = e.getKey();
+            String original = e.getValue();
+            dumped = dumped.replace(placeholder, original);
+        }
 
         String ls = System.lineSeparator();
         if (!"\n".equals(ls)) {
@@ -204,7 +211,7 @@ public class FlatYaml implements FlatService {
         result.put(parentKey, value);
     }
 
-    private ScalarSpec parseScalarSpec(String bare) {
+    private ScalarSpec parseScalarSpec(String bare, Map<String, String> specials) {
         if (bare == null) {
             return new ScalarSpec("", DumperOptions.ScalarStyle.PLAIN, Tag.STR);
         }
@@ -217,6 +224,12 @@ public class FlatYaml implements FlatService {
         if (bare.length() >= 2 && bare.startsWith("'") && bare.endsWith("'")) {
             String raw = bare.substring(1, bare.length() - 1);
             return new ScalarSpec(raw, DumperOptions.ScalarStyle.SINGLE_QUOTED, Tag.STR);
+        }
+
+        if (bare.length() >= 3 && bare.startsWith("!\"") && bare.endsWith("\"")) {
+            String placeholder = "___EXCL__" + specials.size() + "___";
+            specials.put(placeholder, bare);
+            return new ScalarSpec(placeholder, DumperOptions.ScalarStyle.PLAIN, Tag.STR);
         }
 
         Tag tag;
@@ -233,7 +246,8 @@ public class FlatYaml implements FlatService {
             return false;
         }
         int start = 0;
-        if (s.charAt(0) == '-' || s.charAt(0) == '+') {
+        char c0 = s.charAt(0);
+        if (c0 == '-' || c0 == '+') {
             if (s.length() == 1) {
                 return false;
             }
