@@ -17,6 +17,7 @@ class FlatIniTest {
     private static final String INPUT_2 = "src/test/resources/flat_mapper/ini/input_2.ini";
     private static final String INPUT_3 = "src/test/resources/flat_mapper/ini/input_3.ini";
     private static final String EXPECTED_3 = "src/test/resources/flat_mapper/ini/expected_3.txt";
+    private static final String EXPECTED_4 = "src/test/resources/flat_mapper/ini/expected_4.ini";
 
     private final FlatIni flatIni = new FlatIni();
 
@@ -80,5 +81,33 @@ class FlatIniTest {
         assertEquals("хост под Sberl & PES", map.get("blue[0].tslds-efs002596.ufsflcore.delta.sbrf.ru").getComment());
         assertEquals("хост под Sberl & PES", map.get("green[0].tslds-efs002603.ufsflcore.delta.sbrf.ru").getComment());
         assertEquals("VM", map.get("nginx_node_mm[0]").getComment());
+    }
+
+    @Test
+    void flatToString_commentsMapping() throws Exception {
+        var item1 = new FileDataItem();
+        item1.setKey("key1");
+        item1.setValue("value1");
+        item1.setComment("comment1");
+
+        var item2 = new FileDataItem();
+        item2.setKey("key2");
+        item2.setValue("value2");
+        item2.setComment("comment2");
+
+        var item3 = new FileDataItem();
+        item3.setKey("key3");
+        item3.setValue("value3");
+
+        HashMap<String, FileDataItem> map = new HashMap<>();
+        map.put("key1", item1);
+        map.put("key2", item2);
+        map.put("key3", item3);
+
+        var actual = flatIni.flatToString(map);
+
+        var expected = Files.readString(Paths.get(EXPECTED_4));
+
+        assertEquals(expected, actual);
     }
 }
