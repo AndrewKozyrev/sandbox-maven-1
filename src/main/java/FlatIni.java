@@ -1,127 +1,194 @@
+import org.apache.commons.lang3.NotImplementedException;
+
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.WeakHashMap;
 
 public class FlatIni implements FlatService {
 
-    private static final String DEFAULT_LS = System.lineSeparator();
-
-    private final Map<Map<String, FileDataItem>, State> stateByMap =
-            Collections.synchronizedMap(new WeakHashMap<>());
+    private final IdentityHashMap<Map<String, FileDataItem>, State> stateByMap = new IdentityHashMap<>();
 
     @Override
     public Map<String, FileDataItem> flatToMap(String data) {
-        Map<String, FileDataItem> result = new LinkedHashMap<>();
-
+        LinkedHashMap<String, FileDataItem> result = new LinkedHashMap<>();
         if (data == null || data.isBlank()) {
-            stateByMap.put(result, new State(new ArrayList<>(), DEFAULT_LS, false));
             return result;
         }
 
-        String ls = detectLineSeparator(data);
-        boolean endsWithNewline = endsWithAnyNewline(data);
+        String lineSeparator = detectLineSeparator(data);
+        boolean endsWithNewline = data.endsWith("\n") || data.endsWith("\r");
 
-        String[] all = data.split("\\R", -1);
-        int n = all.length;
-        if (endsWithNewline && n > 0 && all[n - 1].isEmpty()) {
-            n--;
+        String[] rawLines = data.split("\\R", -1);
+        List<String> lines = new ArrayList<>();
+        Collections.addAll(lines, rawLines);
+        if (endsWithNewline && !lines.isEmpty() && lines.get(lines.size() - 1).isEmpty()) {
+            lines.remove(lines.size() - 1);
         }
 
-        List<LineEntry> structure = new ArrayList<>();
-        List<String> pendingItemComments = new ArrayList<>();
+        boolean sectioned = containsSectionHeader(lines);
 
-        boolean sawAnySection = false;
-        String currentSection = null;
+        State st = new State(sectioned, endsWithNewline, lineSeparator);
+        if (sectioned) {
+            parseSectioned(lines, result, st);
+        } else {
+            parsePlain(lines, result, st);
+        }
 
-        Map<String, Integer> sectionNextIndex = new LinkedHashMap<>();
-        Map<String, String> sectionPlaceholderKey = new LinkedHashMap<>();
+        stateByMap.put(result, st);
+        return result;
+    }
 
-        for (int i = 0; i < n; i++) {
-            String line = all[i];
+    @Override
+    public String flatToString(Map<String, FileDataItem> data) {
+        if (data == null || data.isEmpty()) {
+            return "";
+        }
+
+        State st = stateByMap.get(data);
+        if (st == null) {
+            if (looksLikeSectionedKeys(data)) {
+                return dumpSectionedFallback(data, System.lineSeparator());
+            }
+            return dumpPlainFallback(data, System.lineSeparator());
+        }
+
+        String out;
+        if (st.sectioned) {
+            out = dumpWithStructureSectioned(data, st);
+        } else {
+            out = dumpWithStructurePlain(data, st);
+        }
+
+        if (!st.originalEndsWithNewline) {
+            String ls = st.lineSeparator;
+            if (out.endsWith(ls)) {
+                out = out.substring(0, out.length() - ls.length());
+            } else if (out.endsWith("\n") || out.endsWith("\r")) {
+                out = out.substring(0, out.length() - 1);
+            }
+        }
+        return out;
+    }
+
+    @Override
+    public void validate(Map<String, FileDataItem> data) {
+        throw new NotImplementedException("Validation of INI files is not implemented yet.");
+    }
+
+    private void parsePlain(List<String> lines, LinkedHashMap<String, FileDataItem> result, State st) {
+        List<String> pendingMeta = new ArrayList<>();
+
+        for (String line : lines) {
             if (line == null) {
                 continue;
             }
-
             String trimmed = line.trim();
 
             if (trimmed.isEmpty()) {
-                structure.add(LineEntry.empty());
-                pendingItemComments.clear();
+                st.structure.add(LineEntry.empty());
+                pendingMeta.clear();
                 continue;
             }
 
-            if (startsWithCommentPrefix(trimmed)) {
-                structure.add(LineEntry.comment(line));
-                String summary = stripCommentPrefix(trimmed);
-                if (!summary.isEmpty() && shouldAttachToNextItem(summary)) {
-                    pendingItemComments.add(summary);
-                }
-                continue;
-            }
-
-            if (isSectionHeader(trimmed)) {
-                sawAnySection = true;
-                currentSection = extractSectionName(trimmed);
-                structure.add(LineEntry.section(currentSection));
-                pendingItemComments.clear();
-
-                if (!sectionNextIndex.containsKey(currentSection)) {
-                    sectionNextIndex.put(currentSection, 0);
-                }
-
-                if (!sectionPlaceholderKey.containsKey(currentSection)) {
-                    String placeholderKey = currentSection + "[0]";
-                    sectionPlaceholderKey.put(currentSection, placeholderKey);
-
-                    if (!result.containsKey(placeholderKey)) {
-                        FileDataItem ph = new FileDataItem();
-                        ph.setKey(placeholderKey);
-                        ph.setPath(placeholderKey);
-                        ph.setValue("");
-                        result.put(placeholderKey, ph);
-                    }
+            if (isCommentLine(trimmed)) {
+                st.structure.add(LineEntry.comment(line));
+                String content = stripCommentPrefix(trimmed);
+                if (!content.isEmpty() && isMetaComment(content, null)) {
+                    pendingMeta.add(content);
                 }
                 continue;
             }
 
-            if (!sawAnySection) {
-                int eq = trimmed.indexOf('=');
-                if (eq < 0) {
-                    continue;
-                }
-                String key = trimmed.substring(0, eq).trim();
-                String value = trimmed.substring(eq + 1).trim();
+            int eq = line.indexOf('=');
+            String key;
+            String value;
 
+            if (eq >= 0) {
+                key = line.substring(0, eq).trim();
+                value = line.substring(eq + 1).trim();
+            } else {
+                key = trimmed;
+                value = "";
+            }
+
+            if (!key.isEmpty()) {
                 FileDataItem item = new FileDataItem();
                 item.setKey(key);
                 item.setPath(key);
                 item.setValue(value);
-
-                String c = joinSummaryComments(pendingItemComments);
-                if (c != null && !c.isEmpty()) {
-                    item.setComment(c);
+                if (!pendingMeta.isEmpty()) {
+                    item.setComment(joinMeta(pendingMeta));
                 }
-                pendingItemComments.clear();
+                pendingMeta.clear();
 
                 result.put(key, item);
-                structure.add(LineEntry.global(key));
+                st.structure.add(LineEntry.data(key));
+            }
+        }
+    }
+
+    private void parseSectioned(List<String> lines, LinkedHashMap<String, FileDataItem> result, State st) {
+        String currentSection = null;
+        boolean currentSectionHadData = false;
+
+        Map<String, Integer> sectionIndex = new LinkedHashMap<>();
+        List<String> pendingMeta = new ArrayList<>();
+
+        for (String line : lines) {
+            if (line == null) {
+                continue;
+            }
+            String trimmed = line.trim();
+
+            if (trimmed.isEmpty()) {
+                st.structure.add(LineEntry.empty());
+                pendingMeta.clear();
                 continue;
             }
 
-            Integer idxObj = sectionNextIndex.get(currentSection);
-            int idx = (idxObj == null) ? 0 : idxObj;
-            sectionNextIndex.put(currentSection, idx + 1);
+            if (isSectionHeader(trimmed)) {
+                if (currentSection != null && !currentSectionHadData) {
+                    ensureEmptySectionPlaceholder(result, currentSection);
+                }
+
+                currentSection = trimmed.substring(1, trimmed.length() - 1).trim();
+                currentSectionHadData = false;
+                pendingMeta.clear();
+
+                st.structure.add(LineEntry.section(currentSection));
+                if (!sectionIndex.containsKey(currentSection)) {
+                    sectionIndex.put(currentSection, 0);
+                }
+                continue;
+            }
+
+            if (isCommentLine(trimmed)) {
+                st.structure.add(LineEntry.comment(line));
+                String content = stripCommentPrefix(trimmed);
+                if (!content.isEmpty() && isMetaComment(content, currentSection)) {
+                    pendingMeta.add(content);
+                }
+                continue;
+            }
+
+            if (currentSection == null) {
+                continue;
+            }
+
+            int idx = sectionIndex.get(currentSection);
+            sectionIndex.put(currentSection, idx + 1);
+
+            boolean hasWs = containsWhitespace(trimmed);
+            boolean isChildrenSection = currentSection.contains(":children");
 
             String flatKey;
             String value;
 
-            boolean hasWhitespace = containsWhitespace(trimmed);
-            boolean isChildrenSection = currentSection.contains(":children");
-
-            if (isChildrenSection || !hasWhitespace) {
+            if (isChildrenSection || !hasWs) {
                 flatKey = currentSection + "[" + idx + "]";
                 value = trimmed;
             } else {
@@ -132,206 +199,173 @@ public class FlatIni implements FlatService {
                 value = rest;
             }
 
-            String placeholderKey = sectionPlaceholderKey.get(currentSection);
-            if (idx == 0 && placeholderKey != null && !flatKey.equals(placeholderKey)) {
-                result.remove(placeholderKey);
-                sectionPlaceholderKey.put(currentSection, null);
-            }
-
             FileDataItem item = new FileDataItem();
             item.setKey(flatKey);
             item.setPath(flatKey);
             item.setValue(value);
-
-            String c = joinSummaryComments(pendingItemComments);
-            if (c != null && !c.isEmpty()) {
-                item.setComment(c);
+            if (!pendingMeta.isEmpty()) {
+                item.setComment(joinMeta(pendingMeta));
             }
-            pendingItemComments.clear();
+            pendingMeta.clear();
 
             result.put(flatKey, item);
-            structure.add(LineEntry.data(flatKey));
+            st.structure.add(LineEntry.data(flatKey));
+            currentSectionHadData = true;
         }
 
-        stateByMap.put(result, new State(structure, ls, endsWithNewline));
-        return result;
+        if (currentSection != null && !currentSectionHadData) {
+            ensureEmptySectionPlaceholder(result, currentSection);
+        }
     }
 
-    @Override
-    public String flatToString(Map<String, FileDataItem> data) {
-        if (data == null || data.isEmpty()) {
-            return "";
-        }
-
-        State state = stateByMap.get(data);
-        String ls = (state == null || state.lineSeparator == null) ? DEFAULT_LS : state.lineSeparator;
-        boolean endsWithNewline = state != null && state.endsWithNewline;
-        List<LineEntry> structure = state == null ? null : state.structure;
-
-        if (structure == null || structure.isEmpty()) {
-            List<String> keys = new ArrayList<>(data.keySet());
-            Collections.sort(keys);
-
-            StringBuilder sb = new StringBuilder();
-            for (String k : keys) {
-                FileDataItem item = data.get(k);
-                if (item == null || item.getKey() == null) {
-                    continue;
-                }
-
-                String comment = item.getComment();
-                if (comment != null && !comment.isBlank()) {
-                    String[] cl = comment.split("\\R");
-                    for (String s : cl) {
-                        if (s != null && !s.isBlank()) {
-                            sb.append("#").append(s.trim()).append(ls);
-                        }
-                    }
-                }
-
-                String v = item.getValue() == null ? "" : item.getValue().toString();
-                sb.append(item.getKey()).append("=").append(v);
-                sb.append(ls);
-            }
-
-            String res = sb.toString();
-            return trimTrailingNewline(res, ls, endsWithNewline);
-        }
-
+    private String dumpWithStructurePlain(Map<String, FileDataItem> data, State st) {
+        String ls = st.lineSeparator;
         StringBuilder sb = new StringBuilder();
-        for (LineEntry e : structure) {
-            if (e == null) {
-                continue;
-            }
 
+        for (int i = 0; i < st.structure.size(); i++) {
+            LineEntry e = st.structure.get(i);
             if (e.type == LineType.EMPTY) {
                 sb.append(ls);
                 continue;
             }
-
             if (e.type == LineType.COMMENT) {
                 sb.append(e.text == null ? "" : e.text).append(ls);
                 continue;
             }
-
-            if (e.type == LineType.SECTION) {
-                sb.append("[").append(e.text == null ? "" : e.text).append("]").append(ls);
-                continue;
-            }
-
-            if (e.type == LineType.GLOBAL) {
-                String key = e.text;
-                FileDataItem item = key == null ? null : data.get(key);
-                if (item == null || item.getKey() == null) {
-                    continue;
-                }
-                String v = item.getValue() == null ? "" : item.getValue().toString();
-                sb.append(item.getKey()).append("=").append(v).append(ls);
-                continue;
-            }
-
             if (e.type == LineType.DATA) {
-                String flatKey = e.text;
-                FileDataItem item = flatKey == null ? null : data.get(flatKey);
+                FileDataItem item = data.get(e.flatKey);
                 if (item == null || item.getKey() == null) {
                     continue;
                 }
-                sb.append(formatDataLine(flatKey, item)).append(ls);
+                String key = item.getKey();
+                String value = item.getValue() == null ? "" : item.getValue().toString();
+                sb.append(key).append("=").append(value).append(ls);
             }
         }
 
-        String res = sb.toString();
-        return trimTrailingNewline(res, ls, endsWithNewline);
+        return trimTrailingIfNeeded(sb.toString(), st.originalEndsWithNewline, ls);
     }
 
-    @Override
-    public void validate(Map<String, FileDataItem> data) {
-        throw new UnsupportedOperationException("Validation of INI files is not implemented.");
+    private String dumpWithStructureSectioned(Map<String, FileDataItem> data, State st) {
+        String ls = st.lineSeparator;
+        StringBuilder sb = new StringBuilder();
+
+        for (int i = 0; i < st.structure.size(); i++) {
+            LineEntry e = st.structure.get(i);
+            if (e.type == LineType.EMPTY) {
+                sb.append(ls);
+                continue;
+            }
+            if (e.type == LineType.COMMENT) {
+                sb.append(e.text == null ? "" : e.text).append(ls);
+                continue;
+            }
+            if (e.type == LineType.SECTION) {
+                sb.append("[").append(e.sectionName).append("]").append(ls);
+                continue;
+            }
+            if (e.type == LineType.DATA) {
+                FileDataItem item = data.get(e.flatKey);
+                if (item == null || item.getKey() == null) {
+                    continue;
+                }
+                sb.append(formatSectionedDataLine(e.flatKey, item)).append(ls);
+            }
+        }
+
+        return trimTrailingIfNeeded(sb.toString(), st.originalEndsWithNewline, ls);
     }
 
-    private static boolean isSectionHeader(String trimmed) {
-        return trimmed.startsWith("[") && trimmed.endsWith("]") && trimmed.length() >= 2;
+    private String dumpPlainFallback(Map<String, FileDataItem> data, String ls) {
+        List<String> keys = new ArrayList<>(data.keySet());
+        keys.sort(Comparator.naturalOrder());
+
+        List<String> outLines = new ArrayList<>();
+
+        for (String key : keys) {
+            FileDataItem item = data.get(key);
+            if (item == null || item.getKey() == null) {
+                continue;
+            }
+
+            String comment = item.getComment();
+            if (comment != null && !comment.isBlank()) {
+                String[] cl = comment.split("\\R");
+                for (String c : cl) {
+                    if (c != null && !c.isBlank()) {
+                        outLines.add("#" + c.trim());
+                    }
+                }
+            }
+
+            String value = item.getValue() == null ? "" : item.getValue().toString();
+            outLines.add(item.getKey() + "=" + value);
+        }
+
+        return joinLines(outLines, ls);
     }
 
-    private static String extractSectionName(String trimmed) {
-        return trimmed.substring(1, trimmed.length() - 1).trim();
+    private String dumpSectionedFallback(Map<String, FileDataItem> data, String ls) {
+        List<String> keys = new ArrayList<>(data.keySet());
+        keys.sort(Comparator.naturalOrder());
+
+        List<String> outLines = new ArrayList<>();
+        for (String k : keys) {
+            FileDataItem item = data.get(k);
+            if (item == null || item.getKey() == null) {
+                continue;
+            }
+            String value = item.getValue() == null ? "" : item.getValue().toString();
+            outLines.add(item.getKey() + "=" + value);
+        }
+        return joinLines(outLines, ls);
     }
 
-    private static boolean startsWithCommentPrefix(String trimmed) {
-        return trimmed.startsWith("#") || trimmed.startsWith(";");
-    }
-
-    private static String stripCommentPrefix(String trimmed) {
-        if (trimmed.length() <= 1) {
+    private String joinLines(List<String> lines, String ls) {
+        if (lines.isEmpty()) {
             return "";
         }
-        return trimmed.substring(1).trim();
-    }
-
-    private static boolean shouldAttachToNextItem(String summary) {
-        if (summary == null) {
-            return false;
-        }
-        String s = summary.trim();
-        if (s.isEmpty()) {
-            return false;
-        }
-        if (s.contains("ansible_")) {
-            return false;
-        }
-        if (s.contains("=")) {
-            return false;
-        }
-        if (s.indexOf('.') >= 0 && containsWhitespace(s)) {
-            return false;
-        }
-        if (s.indexOf('.') >= 0 && s.length() > 20) {
-            return false;
-        }
-        return true;
-    }
-
-    private static String joinSummaryComments(List<String> comments) {
-        if (comments == null || comments.isEmpty()) {
-            return null;
-        }
         StringBuilder sb = new StringBuilder();
-        for (String s : comments) {
-            if (s == null) {
-                continue;
+        for (int i = 0; i < lines.size(); i++) {
+            if (i > 0) {
+                sb.append(ls);
             }
-            String t = s.trim();
-            if (t.isEmpty()) {
-                continue;
-            }
-            if (sb.length() > 0) {
-                sb.append(" & ");
-            }
-            sb.append(t);
+            sb.append(lines.get(i));
         }
-        return sb.length() == 0 ? null : sb.toString();
+        return sb.toString();
     }
 
-    private static boolean containsWhitespace(String s) {
-        for (int i = 0; i < s.length(); i++) {
-            if (Character.isWhitespace(s.charAt(i))) {
-                return true;
-            }
+    private String trimTrailingIfNeeded(String s, boolean endsWithNewline, String ls) {
+        if (s == null || s.isEmpty()) {
+            return "";
         }
-        return false;
+        if (endsWithNewline) {
+            return s;
+        }
+        if (s.endsWith(ls)) {
+            return s.substring(0, s.length() - ls.length());
+        }
+        if (s.endsWith("\n") || s.endsWith("\r")) {
+            return s.substring(0, s.length() - 1);
+        }
+        return s;
     }
 
-    private static int firstWhitespaceIndex(String s) {
-        for (int i = 0; i < s.length(); i++) {
-            if (Character.isWhitespace(s.charAt(i))) {
-                return i;
-            }
+    private void ensureEmptySectionPlaceholder(LinkedHashMap<String, FileDataItem> result, String section) {
+        String key = section + "[0]";
+        if (result.containsKey(key)) {
+            return;
         }
-        return -1;
+        FileDataItem item = new FileDataItem();
+        item.setKey(key);
+        item.setPath(key);
+        item.setValue("");
+        result.put(key, item);
     }
 
-    private static String formatDataLine(String flatKey, FileDataItem item) {
+    private String formatSectionedDataLine(String flatKey, FileDataItem item) {
         String value = item.getValue() == null ? "" : item.getValue().toString();
+
         int dotAfterBracket = flatKey.indexOf("].");
         if (dotAfterBracket >= 0) {
             String host = flatKey.substring(dotAfterBracket + 2);
@@ -343,18 +377,123 @@ public class FlatIni implements FlatService {
         return value;
     }
 
-    private static boolean endsWithAnyNewline(String data) {
-        if (data == null || data.isEmpty()) {
-            return false;
+    private boolean looksLikeSectionedKeys(Map<String, FileDataItem> data) {
+        for (String k : data.keySet()) {
+            if (k != null && k.contains("[") && k.contains("]")) {
+                return true;
+            }
         }
-        char c = data.charAt(data.length() - 1);
-        return c == '\n' || c == '\r';
+        return false;
     }
 
-    private static String detectLineSeparator(String data) {
-        if (data == null || data.isEmpty()) {
-            return DEFAULT_LS;
+    private boolean containsSectionHeader(List<String> lines) {
+        for (String line : lines) {
+            if (line == null) {
+                continue;
+            }
+            String t = line.trim();
+            if (isSectionHeader(t)) {
+                return true;
+            }
         }
+        return false;
+    }
+
+    private boolean isSectionHeader(String trimmed) {
+        return trimmed.startsWith("[") && trimmed.endsWith("]") && trimmed.length() >= 2;
+    }
+
+    private boolean isCommentLine(String trimmed) {
+        return trimmed.startsWith("#") || trimmed.startsWith(";");
+    }
+
+    private String stripCommentPrefix(String trimmed) {
+        if (trimmed == null || trimmed.isEmpty()) {
+            return "";
+        }
+        char c = trimmed.charAt(0);
+        if (c == '#' || c == ';') {
+            return trimmed.substring(1).trim();
+        }
+        return trimmed.trim();
+    }
+
+    private String joinMeta(List<String> meta) {
+        if (meta == null || meta.isEmpty()) {
+            return null;
+        }
+        if (meta.size() == 1) {
+            return meta.get(0);
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < meta.size(); i++) {
+            if (i > 0) {
+                sb.append(" & ");
+            }
+            sb.append(meta.get(i));
+        }
+        return sb.toString();
+    }
+
+    private boolean isMetaComment(String content, String currentSection) {
+        if (content == null) {
+            return false;
+        }
+        String s = content.trim();
+        if (s.isEmpty()) {
+            return false;
+        }
+        return !isLikelyCommentedOutDataLine(s, currentSection);
+    }
+
+    private boolean isLikelyCommentedOutDataLine(String s, String currentSection) {
+        String first = firstToken(s);
+        if (first.isEmpty()) {
+            return false;
+        }
+        boolean hasDot = first.indexOf('.') >= 0;
+        boolean hasWs = containsWhitespace(s);
+
+        if (currentSection != null && currentSection.contains(":children")) {
+            return false;
+        }
+
+        if (hasDot && !hasWs) {
+            return true;
+        }
+        if (hasDot) {
+            return true;
+        }
+        return s.contains("ansible_") || s.contains("ansibleHost") || s.contains("ansible_host");
+    }
+
+    private String firstToken(String s) {
+        int ws = firstWhitespaceIndex(s);
+        if (ws < 0) {
+            return s.trim();
+        }
+        return s.substring(0, ws).trim();
+    }
+
+    private boolean containsWhitespace(String s) {
+        for (int i = 0; i < s.length(); i++) {
+            if (Character.isWhitespace(s.charAt(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private int firstWhitespaceIndex(String s) {
+        for (int i = 0; i < s.length(); i++) {
+            if (Character.isWhitespace(s.charAt(i))) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private String detectLineSeparator(String data) {
         int rn = data.indexOf("\r\n");
         if (rn >= 0) {
             return "\r\n";
@@ -367,72 +506,56 @@ public class FlatIni implements FlatService {
         if (r >= 0) {
             return "\r";
         }
-        return DEFAULT_LS;
-    }
-
-    private static String trimTrailingNewline(String s, String ls, boolean keepTrailing) {
-        if (s == null || s.isEmpty()) {
-            return "";
-        }
-        if (keepTrailing) {
-            return s;
-        }
-        if (ls != null && !ls.isEmpty() && s.endsWith(ls)) {
-            return s.substring(0, s.length() - ls.length());
-        }
-        if (s.endsWith("\n") || s.endsWith("\r")) {
-            return s.substring(0, s.length() - 1);
-        }
-        return s;
+        return System.lineSeparator();
     }
 
     private enum LineType {
         EMPTY,
         COMMENT,
         SECTION,
-        DATA,
-        GLOBAL
+        DATA
     }
 
     private static final class LineEntry {
         final LineType type;
         final String text;
+        final String sectionName;
+        final String flatKey;
 
-        private LineEntry(LineType type, String text) {
+        private LineEntry(LineType type, String text, String sectionName, String flatKey) {
             this.type = type;
             this.text = text;
+            this.sectionName = sectionName;
+            this.flatKey = flatKey;
         }
 
         static LineEntry empty() {
-            return new LineEntry(LineType.EMPTY, null);
+            return new LineEntry(LineType.EMPTY, null, null, null);
         }
 
-        static LineEntry comment(String rawLine) {
-            return new LineEntry(LineType.COMMENT, rawLine);
+        static LineEntry comment(String line) {
+            return new LineEntry(LineType.COMMENT, line, null, null);
         }
 
-        static LineEntry section(String sectionName) {
-            return new LineEntry(LineType.SECTION, sectionName);
+        static LineEntry section(String name) {
+            return new LineEntry(LineType.SECTION, null, name, null);
         }
 
         static LineEntry data(String flatKey) {
-            return new LineEntry(LineType.DATA, flatKey);
-        }
-
-        static LineEntry global(String key) {
-            return new LineEntry(LineType.GLOBAL, key);
+            return new LineEntry(LineType.DATA, null, null, flatKey);
         }
     }
 
     private static final class State {
-        final List<LineEntry> structure;
+        final boolean sectioned;
+        final boolean originalEndsWithNewline;
         final String lineSeparator;
-        final boolean endsWithNewline;
+        final List<LineEntry> structure = new ArrayList<>();
 
-        private State(List<LineEntry> structure, String lineSeparator, boolean endsWithNewline) {
-            this.structure = structure;
-            this.lineSeparator = lineSeparator;
-            this.endsWithNewline = endsWithNewline;
+        State(boolean sectioned, boolean originalEndsWithNewline, String lineSeparator) {
+            this.sectioned = sectioned;
+            this.originalEndsWithNewline = originalEndsWithNewline;
+            this.lineSeparator = lineSeparator == null ? System.lineSeparator() : lineSeparator;
         }
     }
 }
