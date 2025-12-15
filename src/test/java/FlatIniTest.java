@@ -17,6 +17,7 @@ class FlatIniTest {
     private static final String RECONSTRUCTED_ORIGINAL_1 = "src/test/resources/flat_mapper/ini/reconstructed_original.ini";
     private static final String INPUT_2 = "src/test/resources/flat_mapper/ini/input_2.ini";
     private static final String INPUT_3 = "src/test/resources/flat_mapper/ini/input_3.ini";
+    private static final String EXPECTED_2 = "src/test/resources/flat_mapper/ini/expected_2.ini";
     private static final String EXPECTED_3 = "src/test/resources/flat_mapper/ini/expected_3.txt";
     private static final String EXPECTED_4 = "src/test/resources/flat_mapper/ini/expected_4.ini";
 
@@ -109,6 +110,16 @@ class FlatIniTest {
 
         var expected = Files.readString(Paths.get(EXPECTED_4));
 
+        assertEquals(expected, actual);
+    }
+
+    @Test
+    void flatToString_removeParameter() throws Exception {
+        var inputData = Files.readString(Paths.get(ORIGINAL_1_INI));
+        var items = flatIni.flatToMap(inputData);
+        items.remove("green[0].tslds-efs002569.ufsflcore.delta.sbrf.ru");
+        var actual = flatIni.flatToString(items);
+        var expected = Files.readString(Paths.get(EXPECTED_2));
         assertEquals(expected, actual);
     }
 }
