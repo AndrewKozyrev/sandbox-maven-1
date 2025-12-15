@@ -1,6 +1,7 @@
 import org.apache.commons.lang3.NotImplementedException;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -10,28 +11,33 @@ public class FlatIni implements FlatService {
     private final List<LineEntry> structure = new ArrayList<>();
 
     private boolean originalEndsWithNewline = false;
+    private String originalLineSeparator = System.lineSeparator();
 
     @Override
     public Map<String, FileDataItem> flatToMap(String data) {
         Map<String, FileDataItem> result = new LinkedHashMap<>();
         structure.clear();
         originalEndsWithNewline = false;
+        originalLineSeparator = System.lineSeparator();
 
         if (data == null || data.isBlank()) {
             return result;
         }
 
         originalEndsWithNewline = data.endsWith("\n") || data.endsWith("\r");
+        originalLineSeparator = detectLineSeparator(data);
 
-        String[] lines = data.split("\\R", -1);
+        String[] lines = data.split("\\R");
 
         String currentSection = null;
         Map<String, Integer> sectionLineIndex = new LinkedHashMap<>();
+        Map<String, Boolean> hasPlaceholder = new HashMap<>();
 
         for (String line : lines) {
             if (line == null) {
                 continue;
             }
+
             String trimmed = line.trim();
 
             if (trimmed.isEmpty()) {
@@ -44,51 +50,67 @@ public class FlatIni implements FlatService {
                 continue;
             }
 
-            if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+            if (isSectionHeader(trimmed)) {
                 currentSection = trimmed.substring(1, trimmed.length() - 1).trim();
                 structure.add(LineEntry.section(currentSection));
 
-                if (!sectionLineIndex.containsKey(currentSection)) {
-                    sectionLineIndex.put(currentSection, 0);
+                sectionLineIndex.putIfAbsent(currentSection, 0);
+
+                String placeholderKey = currentSection + "[0]";
+                if (!result.containsKey(placeholderKey)) {
+                    FileDataItem item = new FileDataItem();
+                    item.setKey(placeholderKey);
+                    item.setPath(placeholderKey);
+                    item.setValue("");
+                    result.put(placeholderKey, item);
+                    hasPlaceholder.put(currentSection, Boolean.TRUE);
                 }
                 continue;
             }
 
-            String dataLine = trimmed;
-
             if (currentSection == null) {
-                int eq = dataLine.indexOf('=');
-                if (eq < 0) {
-                    continue;
+                int eq = trimmed.indexOf('=');
+                String key;
+                String value;
+                if (eq >= 0) {
+                    key = trimmed.substring(0, eq).trim();
+                    value = trimmed.substring(eq + 1).trim();
+                } else {
+                    key = trimmed.trim();
+                    value = "";
                 }
-                String key = dataLine.substring(0, eq).trim();
-                String value = dataLine.substring(eq + 1).trim();
-
-                FileDataItem item = new FileDataItem();
-                item.setKey(key);
-                item.setValue(value);
-                result.put(key, item);
-
-                structure.add(LineEntry.globalData(key));
+                if (!key.isEmpty()) {
+                    FileDataItem item = new FileDataItem();
+                    item.setKey(key);
+                    item.setPath(key);
+                    item.setValue(value);
+                    result.put(key, item);
+                    structure.add(LineEntry.global(key));
+                }
                 continue;
+            }
+
+            if (Boolean.TRUE.equals(hasPlaceholder.get(currentSection))) {
+                result.remove(currentSection + "[0]");
+                hasPlaceholder.put(currentSection, Boolean.FALSE);
             }
 
             int idx = sectionLineIndex.getOrDefault(currentSection, 0);
             sectionLineIndex.put(currentSection, idx + 1);
 
+            boolean hasWhitespace = containsWhitespace(trimmed);
+            boolean isChildrenSection = currentSection.contains(":children");
+
             String flatKey;
             String value;
 
-            boolean hasWhitespace = containsWhitespace(dataLine);
-            boolean isChildrenSection = currentSection.contains(":children");
-
             if (isChildrenSection || !hasWhitespace) {
                 flatKey = currentSection + "[" + idx + "]";
-                value = dataLine;
+                value = trimmed;
             } else {
-                int ws = firstWhitespaceIndex(dataLine);
-                String host = dataLine.substring(0, ws);
-                String rest = dataLine.substring(ws).trim();
+                int ws = firstWhitespaceIndex(trimmed);
+                String host = trimmed.substring(0, ws);
+                String rest = trimmed.substring(ws).trim();
 
                 flatKey = currentSection + "[" + idx + "]." + host;
                 value = rest;
@@ -96,24 +118,11 @@ public class FlatIni implements FlatService {
 
             FileDataItem item = new FileDataItem();
             item.setKey(flatKey);
+            item.setPath(flatKey);
             item.setValue(value);
             result.put(flatKey, item);
 
-            structure.add(LineEntry.data(currentSection, flatKey));
-        }
-
-        for (Map.Entry<String, Integer> e : sectionLineIndex.entrySet()) {
-            String section = e.getKey();
-            int count = e.getValue();
-            if (count == 0) {
-                String flatKey = section + "[0]";
-                if (!result.containsKey(flatKey)) {
-                    FileDataItem item = new FileDataItem();
-                    item.setKey(flatKey);
-                    item.setValue("");
-                    result.put(flatKey, item);
-                }
-            }
+            structure.add(LineEntry.data(flatKey));
         }
 
         return result;
@@ -124,8 +133,12 @@ public class FlatIni implements FlatService {
         if (data == null || data.isEmpty()) {
             return "";
         }
+
+        String ls = (originalLineSeparator == null || originalLineSeparator.isEmpty())
+                ? System.lineSeparator()
+                : originalLineSeparator;
+
         StringBuilder sb = new StringBuilder();
-        String ls = System.lineSeparator();
 
         if (structure.isEmpty()) {
             boolean first = true;
@@ -144,48 +157,24 @@ public class FlatIni implements FlatService {
         }
 
         for (LineEntry entry : structure) {
-            switch (entry.type) {
-                case EMPTY:
-                    sb.append(ls);
-                    break;
-
-                case COMMENT:
-                    if (entry.lineText != null) {
-                        sb.append(entry.lineText).append(ls);
-                    } else {
-                        sb.append(ls);
-                    }
-                    break;
-
-                case SECTION:
-                    sb.append("[")
-                            .append(entry.sectionName)
-                            .append("]")
-                            .append(ls);
-                    break;
-
-                case DATA: {
-                    FileDataItem item = data.get(entry.flatKey);
-                    if (item == null || item.getKey() == null) {
-                        continue;
-                    }
-                    String line = formatDataLine(entry.flatKey, item);
-                    sb.append(line).append(ls);
-                    break;
+            if (entry.type == LineType.EMPTY) {
+                sb.append(ls);
+            } else if (entry.type == LineType.COMMENT) {
+                sb.append(entry.text == null ? "" : entry.text).append(ls);
+            } else if (entry.type == LineType.SECTION) {
+                sb.append("[").append(entry.text).append("]").append(ls);
+            } else if (entry.type == LineType.DATA) {
+                FileDataItem item = data.get(entry.text);
+                if (item == null || item.getKey() == null) {
+                    continue;
                 }
-
-                case GLOBAL_DATA: {
-                    FileDataItem item = data.get(entry.flatKey);
-                    if (item == null || item.getKey() == null) {
-                        continue;
-                    }
-                    String value = item.getValue() == null ? "" : item.getValue().toString();
-                    sb.append(entry.flatKey).append("=").append(value).append(ls);
-                    break;
+                sb.append(formatSectionDataLine(entry.text, item)).append(ls);
+            } else if (entry.type == LineType.GLOBAL) {
+                FileDataItem item = data.get(entry.text);
+                if (item == null || item.getKey() == null) {
+                    continue;
                 }
-
-                default:
-                    break;
+                sb.append(formatGlobalLine(item)).append(ls);
             }
         }
 
@@ -197,13 +186,16 @@ public class FlatIni implements FlatService {
                 result = result.substring(0, result.length() - 1);
             }
         }
-
         return result;
     }
 
     @Override
     public void validate(Map<String, FileDataItem> data) {
         throw new NotImplementedException("Validation of INI files is not implemented yet.");
+    }
+
+    private static boolean isSectionHeader(String trimmed) {
+        return trimmed.length() >= 2 && trimmed.charAt(0) == '[' && trimmed.charAt(trimmed.length() - 1) == ']';
     }
 
     private static boolean containsWhitespace(String s) {
@@ -224,8 +216,8 @@ public class FlatIni implements FlatService {
         return -1;
     }
 
-    private static String formatDataLine(String flatKey, FileDataItem item) {
-        String value = (item.getValue() == null) ? "" : item.getValue().toString();
+    private static String formatSectionDataLine(String flatKey, FileDataItem item) {
+        String value = item.getValue() == null ? "" : item.getValue().toString();
 
         int dotAfterBracket = flatKey.indexOf("].");
         if (dotAfterBracket >= 0) {
@@ -235,8 +227,26 @@ public class FlatIni implements FlatService {
             }
             return host + " " + value;
         }
-
         return value;
+    }
+
+    private static String formatGlobalLine(FileDataItem item) {
+        String key = item.getKey();
+        String value = item.getValue() == null ? "" : item.getValue().toString();
+        return key + "=" + value;
+    }
+
+    private static String detectLineSeparator(String s) {
+        if (s.contains("\r\n")) {
+            return "\r\n";
+        }
+        if (s.indexOf('\n') >= 0) {
+            return "\n";
+        }
+        if (s.indexOf('\r') >= 0) {
+            return "\r";
+        }
+        return System.lineSeparator();
     }
 
     private enum LineType {
@@ -244,40 +254,36 @@ public class FlatIni implements FlatService {
         COMMENT,
         SECTION,
         DATA,
-        GLOBAL_DATA
+        GLOBAL
     }
 
     private static final class LineEntry {
         final LineType type;
-        final String sectionName;
-        final String flatKey;
-        final String lineText;
+        final String text;
 
-        private LineEntry(LineType type, String sectionName, String flatKey, String lineText) {
+        private LineEntry(LineType type, String text) {
             this.type = type;
-            this.sectionName = sectionName;
-            this.flatKey = flatKey;
-            this.lineText = lineText;
+            this.text = text;
         }
 
         static LineEntry empty() {
-            return new LineEntry(LineType.EMPTY, null, null, null);
+            return new LineEntry(LineType.EMPTY, null);
         }
 
-        static LineEntry comment(String lineText) {
-            return new LineEntry(LineType.COMMENT, null, null, lineText);
+        static LineEntry comment(String line) {
+            return new LineEntry(LineType.COMMENT, line);
         }
 
         static LineEntry section(String sectionName) {
-            return new LineEntry(LineType.SECTION, sectionName, null, null);
+            return new LineEntry(LineType.SECTION, sectionName);
         }
 
-        static LineEntry data(String sectionName, String flatKey) {
-            return new LineEntry(LineType.DATA, sectionName, flatKey, null);
+        static LineEntry data(String flatKey) {
+            return new LineEntry(LineType.DATA, flatKey);
         }
 
-        static LineEntry globalData(String flatKey) {
-            return new LineEntry(LineType.GLOBAL_DATA, null, flatKey, null);
+        static LineEntry global(String key) {
+            return new LineEntry(LineType.GLOBAL, key);
         }
     }
 }
