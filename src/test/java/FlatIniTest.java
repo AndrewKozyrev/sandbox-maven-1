@@ -3,6 +3,8 @@ import org.junit.jupiter.api.Test;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.stream.Collectors;
+import java.util.AbstractMap.SimpleEntry;
+import java.util.ArrayList;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -12,6 +14,8 @@ class FlatIniTest {
     private static final String FLAT_ORIGINAL_1 = "src/test/resources/flat_mapper/ini/flat_original_1.txt";
     private static final String RECONSTRUCTED_ORIGINAL_1 = "src/test/resources/flat_mapper/ini/reconstructed_original.ini";
     private static final String INPUT_2 = "src/test/resources/flat_mapper/ini/input_2.ini";
+    private static final String INPUT_3 = "src/test/resources/flat_mapper/ini/input_3.ini";
+    private static final String EXPECTED_3 = "src/test/resources/flat_mapper/ini/expected_3.txt";
 
     private final FlatIni flatIni = new FlatIni();
 
@@ -47,4 +51,23 @@ class FlatIniTest {
         assertEquals("value1", items.get("param1").getValue());
     }
 
+    @Test
+    void flatToMap_correctOrderOfParams() throws Exception {
+        var inputData = Files.readString(Paths.get(INPUT_3));
+        var items = flatIni.flatToMap(inputData);
+        var actual = new ArrayList<>(items.values());
+        var expected = Files.readAllLines(Paths.get(EXPECTED_3))
+                .stream()
+                .map(x -> x.split("\\s*=\\s*", 2))
+                .map(x -> new SimpleEntry<>(x[0], x[1]))
+                .collect(Collectors.toList());
+        for (int i = 0; i < actual.size(); i++) {
+            var expectedKey = expected.get(i).getKey();
+            var actualKey = actual.get(i).getKey();
+            assertEquals(expectedKey, actualKey);
+            var expectedValue = expected.get(i).getValue();
+            var actualValue = actual.get(i).getValue();
+            assertEquals(expectedValue, actualValue);
+        }
+    }
 }
