@@ -71,4 +71,14 @@ class FlatIniTest {
             assertEquals(expectedValue, actualValue);
         }
     }
+
+    @Test
+    void flatToMap_commentsMapping() throws Exception {
+        var inputData = Files.readString(Paths.get(INPUT_3));
+        var map = flatIni.flatToMap(inputData);
+        assertEquals("Имя кластера", map.get("all:vars[0]").getComment());
+        assertEquals("хост под Sberl & PES", map.get("blue[0].tslds-efs002596.ufsflcore.delta.sbrf.ru").getComment());
+        assertEquals("хост под Sberl & PES", map.get("green[0].tslds-efs002603.ufsflcore.delta.sbrf.ru").getComment());
+        assertEquals("VM", map.get("nginx_node_mm[0]").getComment());
+    }
 }
