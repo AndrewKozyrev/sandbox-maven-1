@@ -88,8 +88,7 @@ public class FlatIni implements FlatService {
     private void parsePlain(List<String> lines, LinkedHashMap<String, FileDataItem> result, State st) {
         List<String> pendingMeta = new ArrayList<>();
 
-        for (int i = 0; i < lines.size(); i++) {
-            String line = lines.get(i);
+        for (String line : lines) {
             if (line == null) {
                 continue;
             }
