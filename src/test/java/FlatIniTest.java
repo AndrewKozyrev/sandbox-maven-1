@@ -21,6 +21,7 @@ class FlatIniTest {
     private static final String EXPECTED_3 = "src/test/resources/flat_mapper/ini/expected_3.txt";
     private static final String EXPECTED_4 = "src/test/resources/flat_mapper/ini/expected_4.ini";
     private static final String EXPECTED_5 = "src/test/resources/flat_mapper/ini/expected_5";
+    private static final String EXPECTED_6 = "src/test/resources/flat_mapper/ini/expected_6";
 
     private final FlatIni flatIni = new FlatIni();
 
@@ -150,6 +151,19 @@ class FlatIniTest {
 
         var actual = flatIni.flatToString(map);
         var expected = Files.readString(Paths.get(EXPECTED_5));
+        assertEquals(expected, actual);
+    }
+
+    @Test
+    void toFlatThenToString_keepsOrder() throws Exception {
+        var inputData = Files.readString(Paths.get(INPUT_3));
+        var map = flatIni.flatToMap(inputData);
+
+        var newMap = new LinkedHashMap<>(map);
+        newMap.get("all:vars[0]").setValue("was_cluster_name=\"value1\"");
+
+        var actual = flatIni.flatToString(newMap);
+        var expected = Files.readString(Paths.get(EXPECTED_6));
         assertEquals(expected, actual);
     }
 }
