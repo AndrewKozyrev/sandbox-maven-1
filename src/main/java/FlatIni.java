@@ -141,8 +141,7 @@ public class FlatIni implements FlatService {
         Map<String, Integer> sectionIndex = new LinkedHashMap<>();
         List<String> pendingMeta = new ArrayList<>();
 
-        for (int i = 0; i < lines.size(); i++) {
-            String line = lines.get(i);
+        for (String line : lines) {
             if (line == null) {
                 continue;
             }
@@ -186,9 +185,7 @@ public class FlatIni implements FlatService {
             int idx = sectionIndex.get(currentSection);
             sectionIndex.put(currentSection, idx + 1);
 
-            String dataLine = trimmed;
-
-            boolean hasWs = containsWhitespace(dataLine);
+            boolean hasWs = containsWhitespace(trimmed);
             boolean isChildrenSection = currentSection.contains(":children");
 
             String flatKey;
@@ -196,11 +193,11 @@ public class FlatIni implements FlatService {
 
             if (isChildrenSection || !hasWs) {
                 flatKey = currentSection + "[" + idx + "]";
-                value = dataLine;
+                value = trimmed;
             } else {
-                int ws = firstWhitespaceIndex(dataLine);
-                String host = dataLine.substring(0, ws);
-                String rest = dataLine.substring(ws).trim();
+                int ws = firstWhitespaceIndex(trimmed);
+                String host = trimmed.substring(0, ws);
+                String rest = trimmed.substring(ws).trim();
                 flatKey = currentSection + "[" + idx + "]." + host;
                 value = rest;
             }
@@ -302,8 +299,7 @@ public class FlatIni implements FlatService {
             String comment = item.getComment();
             if (comment != null && !comment.isBlank()) {
                 String[] cl = comment.split("\\R");
-                for (int i = 0; i < cl.length; i++) {
-                    String c = cl[i];
+                for (String c : cl) {
                     if (c != null && !c.isBlank()) {
                         sb.append("#").append(c.trim()).append(ls);
                     }
@@ -335,18 +331,15 @@ public class FlatIni implements FlatService {
             items.add(new SectionItem(sk.section, sk.index, flatKey, item));
         }
 
-        items.sort(new Comparator<SectionItem>() {
-            @Override
-            public int compare(SectionItem a, SectionItem b) {
-                int sc = a.section.compareTo(b.section);
-                if (sc != 0) {
-                    return sc;
-                }
-                if (a.index != b.index) {
-                    return a.index < b.index ? -1 : 1;
-                }
-                return a.flatKey.compareTo(b.flatKey);
+        items.sort((a, b) -> {
+            int sc = a.section.compareTo(b.section);
+            if (sc != 0) {
+                return sc;
             }
+            if (a.index != b.index) {
+                return a.index < b.index ? -1 : 1;
+            }
+            return a.flatKey.compareTo(b.flatKey);
         });
 
         StringBuilder sb = new StringBuilder();
@@ -377,8 +370,7 @@ public class FlatIni implements FlatService {
             String comment = si.item.getComment();
             if (comment != null && !comment.isBlank()) {
                 String[] cl = comment.split("\\R");
-                for (int j = 0; j < cl.length; j++) {
-                    String c = cl[j];
+                for (String c : cl) {
                     if (c != null && !c.isBlank()) {
                         sb.append("#").append(c.trim()).append(ls);
                     }
@@ -580,13 +572,10 @@ public class FlatIni implements FlatService {
         if (hasDot && !hasWs) {
             return true;
         }
-        if (hasDot && hasWs) {
+        if (hasDot) {
             return true;
         }
-        if (s.contains("ansible_") || s.contains("ansible_host") || s.contains("ansibleHost")) {
-            return true;
-        }
-        return false;
+        return s.contains("ansible_") || s.contains("ansible_host") || s.contains("ansibleHost");
     }
 
     private String firstToken(String s) {
