@@ -20,6 +20,7 @@ class FlatIniTest {
     private static final String EXPECTED_2 = "src/test/resources/flat_mapper/ini/expected_2.ini";
     private static final String EXPECTED_3 = "src/test/resources/flat_mapper/ini/expected_3.txt";
     private static final String EXPECTED_4 = "src/test/resources/flat_mapper/ini/expected_4.ini";
+    private static final String EXPECTED_5 = "src/test/resources/flat_mapper/ini/expected_5";
 
     private final FlatIni flatIni = new FlatIni();
 
@@ -120,6 +121,35 @@ class FlatIniTest {
         items.remove("green[0].tslds-efs002569.ufsflcore.delta.sbrf.ru");
         var actual = flatIni.flatToString(items);
         var expected = Files.readString(Paths.get(EXPECTED_2));
+        assertEquals(expected, actual);
+    }
+
+    @Test
+    void flatToString_simpleSection() throws Exception {
+        var item1 = new FileDataItem();
+        item1.setKey("section1[0]");
+        item1.setValue("param1=value1");
+        item1.setPath("section1[0]");
+        item1.setComment("comment1");
+
+        var item2 = new FileDataItem();
+        item2.setKey("section1[1]");
+        item2.setValue("param2=value2");
+        item2.setPath("section1[1]");
+        item2.setComment("comment2");
+
+        var item3 = new FileDataItem();
+        item3.setKey("section1[2]");
+        item3.setValue("param3=value3");
+        item3.setPath("section1[2]");
+
+        HashMap<String, FileDataItem> map = new HashMap<>();
+        map.put("section1[0]", item1);
+        map.put("section1[1]", item2);
+        map.put("section1[2]", item3);
+
+        var actual = flatIni.flatToString(map);
+        var expected = Files.readString(Paths.get(EXPECTED_5));
         assertEquals(expected, actual);
     }
 }
