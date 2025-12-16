@@ -1,0 +1,39 @@
+[all:vars]
+#Имя кластера
+was_cluster_name="value1"
+was_server_name="server1"
+was_install_path_custom="/usr/IBM/AppServer_EFS"
+
+[local]
+localhost ansible_connection=local
+
+[blue]
+#хост под Sberl & PES
+tslds-efs002596.ufsflcore.delta.sbrf.ru ansible_host=tslds-efs002596.ufsflcore.delta.sbrf.ru ansible_user="{{ SSD_SSH_USER }}" ansible_ssh_private_key_file="{{ vm_ssd_ssh_cred }}"
+
+
+[green]
+#хост под Sberl & PES
+tslds-efs002603.ufsflcore.delta.sbrf.ru ansible_host=tslds-efs002603.ufsflcore.delta.sbrf.ru ansible_user="{{ SSD_SSH_USER }}" ansible_ssh_private_key_file="{{ vm_ssd_ssh_cred }}"
+
+
+[vm_sds_master:children]
+blue
+green
+
+[nginx_mm]
+
+[nginx_node_mm]
+#VM
+tslds-efs002596.ufsflcore.delta.sbrf.ru
+tslds-efs002603.ufsflcore.delta.sbrf.ru
+
+[hosts:children]
+local
+nginx_mm
+vm_sds_master
+
+[secure:children]
+local
+nginx_mm
+vm_sds_master
