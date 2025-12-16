@@ -1,5 +1,5 @@
 [all:vars]
-#Имя кластера
+# Имя кластера
 was_cluster_name="value1"
 was_server_name="server1"
 was_install_path_custom="/usr/IBM/AppServer_EFS"
