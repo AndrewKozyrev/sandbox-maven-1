@@ -1,0 +1,19 @@
+# Стендоспецифичные параметры, не используемые в самом master-ССД.
+# Команды для старта/остановки master-ССД на VM:
+application_startup_command: "systemctl is-enabled -q {{ service_name }}.service || sudo /usr/bin/systemctl enable {{ service_name }}.service; sudo /usr/bin/systemctl start {{ service_name }}.service && systemctl -q is-active {{ service_name }}.service && exit 0 || grep -A 2 'SEVERE' {{ logs_path[0] }}/session_registry_master.start.log && exit 1"
+application_stop_command: "sudo /usr/bin/systemctl stop {{ service_name }}.service"
+
+# Время старта JVM процесса master-ССД
+master_start_jvm_timeout_seconds: 85
+
+
+# Включение доставки zero secrets средствами Pipeline
+zero_secrets_delivery_enabled: true
+
+# Параметры Approle аутентификации в SecMan
+secrets.app_role_auth_method: "ar/worker/ar"
+secrets.app_role_name: "auth-role-efsfl.susd"
+# Таймаут запросов в SecMan для получения zero secrets в секундах
+secrets.timeout: 100
+# Количество повторных попыток выполнения запросов в SecMan для получения zero secrets (0 повторные запросы выключены)
+secrets.retries: 0
