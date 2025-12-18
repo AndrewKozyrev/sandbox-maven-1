@@ -11,6 +11,7 @@ class FlatConfYamlTest {
     private static final String INPUT_CONF_YAML = "src/test/resources/flat_mapper/yaml/custom_property.conf.yml";
     private static final String FLAT_CONF_YAML = "src/test/resources/flat_mapper/yaml/flattened_custom_property_flat_conf_yml.txt";
     private static final String RECONSTRUCTED_CONF_YAML = "src/test/resources/flat_mapper/yaml/reconstructed_custom_property.conf.yml";
+    private static final String INPUT_7 = "src/test/resources/flat_mapper/yaml/input_7.conf.yml";
 
     private final FlatConfYaml flatConfYaml = new FlatConfYaml();
 
@@ -36,6 +37,16 @@ class FlatConfYamlTest {
         var actual = flatConfYaml.flatToString(items);
         var expected = Files.readString(Paths.get(RECONSTRUCTED_CONF_YAML));
         assertEquals(expected, actual);
+    }
+
+    @Test
+    void preserveEmptyLinesAfterEdit() throws Exception {
+        var inputData = Files.readString(Paths.get(INPUT_7));
+        var map = new FlatConfYaml().flatToMap(inputData);
+
+        var actual = new FlatConfYaml().flatToString(map);
+
+        assertEquals(inputData, actual);
     }
 
 }
