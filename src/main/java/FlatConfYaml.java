@@ -1,117 +1,45 @@
+import org.apache.commons.lang3.NotImplementedException;
+
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 public class FlatConfYaml implements FlatService {
 
-    private final List<LineEntry> structure = new ArrayList<>();
+    private static final String DEFAULT_LS = "\n";
 
-    private boolean originalEndsWithNewline = false;
+    private static final Object CACHE_LOCK = new Object();
+    private static final IdentityHashMap<Map<String, FileDataItem>, State> STATE_BY_MAP = new IdentityHashMap<>();
+    private static final IdentityHashMap<FileDataItem, State> STATE_BY_ITEM = new IdentityHashMap<>();
+    private static final int MAX_MAP_CACHE = 256;
+    private static final int MAX_ITEM_CACHE = 8192;
 
     @Override
     public Map<String, FileDataItem> flatToMap(String data) {
-        Map<String, FileDataItem> result = new LinkedHashMap<>();
-        structure.clear();
-        originalEndsWithNewline = false;
-
+        StructuredMap result = new StructuredMap();
         if (data == null || data.isBlank()) {
             return result;
         }
 
-        originalEndsWithNewline = data.endsWith("\n") || data.endsWith("\r");
+        String lineSeparator = detectLineSeparator(data);
+        boolean endsWithNewline = data.endsWith("\n") || data.endsWith("\r");
 
-        String[] lines = data.split("\\R");
-        String currentKey = null;
-        StringBuilder currentValue = new StringBuilder();
-        String currentComment = null;
-        StringBuilder pendingComment = new StringBuilder();
-
-        for (String line : lines) {
-            if (line == null) {
-                continue;
-            }
-
-            String trimmed = line.trim();
-
-            if (trimmed.isEmpty()) {
-                structure.add(LineEntry.empty());
-                continue;
-            }
-
-            if (trimmed.startsWith("#")) {
-                structure.add(LineEntry.comment(line));
-
-                String text = trimmed.substring(1).trim();
-                if (!text.isEmpty()) {
-                    if (pendingComment.length() > 0) {
-                        pendingComment.append(System.lineSeparator());
-                    }
-                    pendingComment.append(text);
-                }
-                continue;
-            }
-
-            boolean startsWithWhitespace = Character.isWhitespace(line.charAt(0));
-            int colonIdx = line.indexOf(':');
-
-            boolean isTopLevelKey =
-                    !startsWithWhitespace &&
-                            colonIdx > 0 &&
-                            !trimmed.startsWith("- ");
-
-            if (isTopLevelKey) {
-                if (currentKey != null) {
-                    FileDataItem item = new FileDataItem();
-                    item.setKey(currentKey);
-                    item.setValue(currentValue.toString());
-                    if (currentComment != null && !currentComment.isBlank()) {
-                        item.setComment(currentComment);
-                    }
-                    result.put(currentKey, item);
-                }
-
-                String key = line.substring(0, colonIdx).trim();
-                String rawValuePart = line.substring(colonIdx + 1);
-                String valuePart;
-                String inlineComment = null;
-                int commentIdx = findInlineCommentIndex(rawValuePart);
-                if (commentIdx >= 0) {
-                    valuePart = rawValuePart.substring(0, commentIdx).trim();
-                    inlineComment = rawValuePart.substring(commentIdx + 1).trim();
-                } else {
-                    valuePart = rawValuePart.trim();
-                }
-
-                structure.add(LineEntry.key(key));
-
-                currentKey = key;
-                currentValue.setLength(0);
-                currentValue.append(valuePart);
-
-                String blockComments = pendingComment.length() == 0 ? null : pendingComment.toString();
-                currentComment = mergeComments(blockComments, inlineComment);
-                pendingComment.setLength(0);
-            } else {
-                if (currentKey != null) {
-                    if (currentValue.length() > 0) {
-                        currentValue.append(System.lineSeparator());
-                    }
-                    currentValue.append(line);
-                }
-            }
+        String[] raw = data.split("\\R", -1);
+        List<String> lines = new ArrayList<>();
+        Collections.addAll(lines, raw);
+        if (endsWithNewline && !lines.isEmpty() && lines.get(lines.size() - 1).isEmpty()) {
+            lines.remove(lines.size() - 1);
         }
 
-        if (currentKey != null) {
-            FileDataItem item = new FileDataItem();
-            item.setKey(currentKey);
-            item.setValue(currentValue.toString());
-            if (currentComment != null && !currentComment.isBlank()) {
-                item.setComment(currentComment);
-            }
-            result.put(currentKey, item);
-        }
+        State st = new State(endsWithNewline, lineSeparator);
+        result.state = st;
 
+        parse(lines, result, st);
+
+        rememberState(result, st);
         return result;
     }
 
@@ -121,152 +49,310 @@ public class FlatConfYaml implements FlatService {
             return "";
         }
 
-        StringBuilder sb = new StringBuilder();
-
-        if (structure.isEmpty()) {
-            for (FileDataItem item : data.values()) {
-                if (item == null || item.getKey() == null) {
-                    continue;
-                }
-                String comment = item.getComment();
-                if (comment != null && !comment.isBlank()) {
-                    String[] lines = comment.split("\\R");
-                    for (String line : lines) {
-                        if (line != null && !line.isBlank()) {
-                            sb.append("# ")
-                                    .append(line.trim())
-                                    .append(System.lineSeparator());
-                        }
-                    }
-                }
-                sb.append(item.getKey()).append(": ");
-                Object value = item.getValue();
-                if (value != null) {
-                    sb.append(value);
-                }
-                sb.append(System.lineSeparator());
-            }
-
-            String result = sb.toString();
-            if (!originalEndsWithNewline) {
-                String ls = System.lineSeparator();
-                if (result.endsWith(ls)) {
-                    result = result.substring(0, result.length() - ls.length());
-                } else if (result.endsWith("\n") || result.endsWith("\r")) {
-                    result = result.substring(0, result.length() - 1);
-                }
-            }
-            return result;
+        State st = resolveState(data);
+        if (st == null || st.structure.isEmpty()) {
+            return dumpFallback(data, DEFAULT_LS);
         }
 
-        for (LineEntry entry : structure) {
-            switch (entry.type) {
-                case EMPTY:
-                    sb.append(System.lineSeparator());
-                    break;
-                case COMMENT:
-                    if (entry.text != null) {
-                        sb.append(entry.text).append(System.lineSeparator());
-                    } else {
-                        sb.append(System.lineSeparator());
-                    }
-                    break;
-                case KEY:
-                    String key = entry.text;
-                    if (key == null) {
-                        continue;
-                    }
-                    FileDataItem item = data.get(key);
-                    if (item == null || item.getKey() == null) {
-                        continue;
-                    }
-                    sb.append(item.getKey()).append(": ");
-                    Object value = item.getValue();
-                    if (value != null) {
-                        sb.append(value);
-                    }
-                    sb.append(System.lineSeparator());
-                    break;
-            }
-        }
+        String out = dumpWithStructure(data, st);
 
-        String result = sb.toString();
-        if (!originalEndsWithNewline) {
-            String ls = System.lineSeparator();
-            if (result.endsWith(ls)) {
-                result = result.substring(0, result.length() - ls.length());
-            } else if (result.endsWith("\n") || result.endsWith("\r")) {
-                result = result.substring(0, result.length() - 1);
-            }
+        if (!st.originalEndsWithNewline) {
+            out = trimTrailingIfNeeded(out, st.lineSeparator);
         }
-        return result;
+        return out;
     }
 
     @Override
     public void validate(Map<String, FileDataItem> data) {
-        throw new UnsupportedOperationException("Validation for conf YAML is not implemented.");
+        throw new NotImplementedException("Validation of .conf.yml files is not implemented yet.");
     }
 
-    private static int findInlineCommentIndex(String text) {
-        if (text == null) {
-            return -1;
+    private static void parse(List<String> lines, LinkedHashMap<String, FileDataItem> result, State st) {
+        String currentKey = null;
+        StringBuilder currentValue = new StringBuilder();
+        String currentPrefix = null;
+        String currentSuffix = null;
+
+        StringBuilder pendingMeta = new StringBuilder();
+
+        for (String line : lines) {
+            if (line == null) {
+                continue;
+            }
+
+            String trimmed = line.trim();
+
+            if (trimmed.isEmpty()) {
+                st.structure.add(LineEntry.empty());
+                // separator: meta comments shouldn't cross blank lines
+                pendingMeta.setLength(0);
+                continue;
+            }
+
+            if (trimmed.startsWith("#")) {
+                st.structure.add(LineEntry.comment(line));
+                if (pendingMeta.length() > 0) {
+                    pendingMeta.append('\n');
+                }
+                pendingMeta.append(trimmed.substring(1).trim());
+                continue;
+            }
+
+            // continuation of multiline value (indented lines, lists, etc)
+            if (currentKey != null && (line.startsWith(" ") || line.startsWith("\t") || trimmed.startsWith("- "))) {
+                currentValue.append('\n').append(line);
+                continue;
+            }
+
+            // new top-level key => commit previous
+            if (isTopLevelKeyLine(line)) {
+                commitCurrent(result, currentKey, currentValue, pendingMeta, st, currentPrefix, currentSuffix);
+
+                int colonIdx = line.indexOf(':');
+                String keyRaw = line.substring(0, colonIdx);
+                String key = keyRaw.trim();
+
+                String afterColon = line.substring(colonIdx + 1);
+                int commentIdx = findInlineCommentIndex(afterColon);
+
+                String nonCommentPart = commentIdx >= 0 ? afterColon.substring(0, commentIdx) : afterColon;
+                String commentPart = commentIdx >= 0 ? afterColon.substring(commentIdx) : "";
+
+                int valueStart = 0;
+                while (valueStart < nonCommentPart.length() && Character.isWhitespace(nonCommentPart.charAt(valueStart))) {
+                    valueStart++;
+                }
+                int valueEnd = nonCommentPart.length();
+                while (valueEnd > valueStart && Character.isWhitespace(nonCommentPart.charAt(valueEnd - 1))) {
+                    valueEnd--;
+                }
+
+                currentPrefix = line.substring(0, colonIdx + 1) + nonCommentPart.substring(0, valueStart);
+                currentSuffix = nonCommentPart.substring(valueEnd) + commentPart;
+
+                String valueText = nonCommentPart.substring(valueStart, valueEnd).trim();
+
+                currentKey = key;
+                currentValue = new StringBuilder();
+                currentValue.append(valueText);
+
+                st.structure.add(LineEntry.key(currentKey, currentPrefix, currentSuffix));
+                continue;
+            }
+
+            // unknown line (should be rare in this simplified parser) - preserve it in output
+            st.structure.add(LineEntry.raw(line));
+            pendingMeta.setLength(0);
         }
+
+        commitCurrent(result, currentKey, currentValue, pendingMeta, st, currentPrefix, currentSuffix);
+    }
+
+    private static void commitCurrent(
+            LinkedHashMap<String, FileDataItem> result,
+            String currentKey,
+            StringBuilder currentValue,
+            StringBuilder pendingMeta,
+            State st,
+            String currentPrefix,
+            String currentSuffix
+    ) {
+        if (currentKey == null) {
+            return;
+        }
+
+        FileDataItem item = new FileDataItem();
+        item.setKey(currentKey);
+        item.setPath(currentKey);
+        item.setValue(currentValue.toString());
+
+        if (pendingMeta.length() > 0) {
+            item.setComment(pendingMeta.toString());
+        }
+
+        result.put(currentKey, item);
+
+        // meta belongs to the key we just committed
+        pendingMeta.setLength(0);
+    }
+
+    private static boolean isTopLevelKeyLine(String line) {
+        if (line == null) return false;
+        if (line.isEmpty()) return false;
+        char c0 = line.charAt(0);
+        if (c0 == ' ' || c0 == '\t') return false; // indented => continuation
+        if (line.startsWith("- ")) return false; // list item
+        int idx = line.indexOf(':');
+        return idx > 0; // key:
+    }
+
+    private static int findInlineCommentIndex(String s) {
+        if (s == null || s.isEmpty()) return -1;
+
         boolean inSingle = false;
         boolean inDouble = false;
-        for (int i = 0; i < text.length(); i++) {
-            char c = text.charAt(i);
-            if (c == '"' && !inSingle) {
-                inDouble = !inDouble;
-            } else if (c == '\'' && !inDouble) {
+
+        for (int i = 0; i < s.length(); i++) {
+            char ch = s.charAt(i);
+            if (ch == '\'' && !inDouble) {
                 inSingle = !inSingle;
-            } else if (c == '#' && !inSingle && !inDouble) {
+            } else if (ch == '"' && !inSingle) {
+                inDouble = !inDouble;
+            } else if (ch == '#' && !inSingle && !inDouble) {
                 return i;
             }
         }
         return -1;
     }
 
-    private static String mergeComments(String block, String inline) {
-        boolean blockEmpty = (block == null || block.isBlank());
-        boolean inlineEmpty = (inline == null || inline.isBlank());
+    private static String dumpWithStructure(Map<String, FileDataItem> data, State st) {
+        String ls = st.lineSeparator != null ? st.lineSeparator : DEFAULT_LS;
+        StringBuilder sb = new StringBuilder();
 
-        if (blockEmpty && inlineEmpty) {
-            return null;
+        for (LineEntry e : st.structure) {
+            if (e.type == LineType.EMPTY) {
+                sb.append(ls);
+                continue;
+            }
+            if (e.type == LineType.COMMENT || e.type == LineType.RAW) {
+                sb.append(e.text).append(ls);
+                continue;
+            }
+            if (e.type == LineType.KEY) {
+                FileDataItem item = data.get(e.key);
+                if (item == null) {
+                    continue; // key removed
+                }
+                String value = item.getValue() == null ? "" : item.getValue().toString();
+                // value is scalar for this simplified format
+                sb.append(e.prefix).append(value).append(e.suffix).append(ls);
+            }
         }
-        if (blockEmpty) {
-            return inline.trim();
-        }
-        if (inlineEmpty) {
-            return block.trim();
-        }
-        return block.trim() + System.lineSeparator() + inline.trim();
+
+        return sb.toString();
     }
 
-    private enum LineType {
-        EMPTY,
-        COMMENT,
-        KEY
+    private static String dumpFallback(Map<String, FileDataItem> data, String ls) {
+        // deterministic: sort keys
+        List<String> keys = new ArrayList<>(data.keySet());
+        keys.sort(String::compareTo);
+
+        StringBuilder sb = new StringBuilder();
+        for (String k : keys) {
+            FileDataItem item = data.get(k);
+            if (item == null) continue;
+            String v = item.getValue() == null ? "" : item.getValue().toString();
+            sb.append(k).append(": ").append(v).append(ls);
+        }
+        return sb.toString();
     }
+
+    private static String trimTrailingIfNeeded(String out, String ls) {
+        if (out == null || out.isEmpty()) return out;
+        if (ls != null && !ls.isEmpty() && out.endsWith(ls)) {
+            return out.substring(0, out.length() - ls.length());
+        }
+        if (out.endsWith("\n") || out.endsWith("\r")) {
+            return out.substring(0, out.length() - 1);
+        }
+        return out;
+    }
+
+    private static String detectLineSeparator(String data) {
+        int idx = data.indexOf("\r\n");
+        if (idx >= 0) return "\r\n";
+        idx = data.indexOf('\n');
+        if (idx >= 0) return "\n";
+        idx = data.indexOf('\r');
+        if (idx >= 0) return "\r";
+        return DEFAULT_LS;
+    }
+
+    private static void rememberState(Map<String, FileDataItem> map, State st) {
+        synchronized (CACHE_LOCK) {
+            if (STATE_BY_MAP.size() > MAX_MAP_CACHE) {
+                STATE_BY_MAP.clear();
+            }
+            if (STATE_BY_ITEM.size() > MAX_ITEM_CACHE) {
+                STATE_BY_ITEM.clear();
+            }
+            STATE_BY_MAP.put(map, st);
+            for (FileDataItem item : map.values()) {
+                if (item != null) {
+                    STATE_BY_ITEM.put(item, st);
+                }
+            }
+        }
+    }
+
+    private static State resolveState(Map<String, FileDataItem> data) {
+        if (data instanceof StructuredMap) {
+            State st = ((StructuredMap) data).state;
+            if (st != null) return st;
+        }
+
+        synchronized (CACHE_LOCK) {
+            State st = STATE_BY_MAP.get(data);
+            if (st != null) return st;
+        }
+
+        synchronized (CACHE_LOCK) {
+            for (FileDataItem item : data.values()) {
+                if (item == null) continue;
+                State st = STATE_BY_ITEM.get(item);
+                if (st != null) return st;
+            }
+        }
+
+        return null;
+    }
+
+    private static final class StructuredMap extends LinkedHashMap<String, FileDataItem> {
+        private State state;
+    }
+
+    private static final class State {
+        final boolean originalEndsWithNewline;
+        final String lineSeparator;
+        final List<LineEntry> structure = new ArrayList<>();
+
+        State(boolean originalEndsWithNewline, String lineSeparator) {
+            this.originalEndsWithNewline = originalEndsWithNewline;
+            this.lineSeparator = lineSeparator != null ? lineSeparator : DEFAULT_LS;
+        }
+    }
+
+    private enum LineType { EMPTY, COMMENT, KEY, RAW }
 
     private static final class LineEntry {
         final LineType type;
-        final String text;
+        final String text;   // for COMMENT/RAW
+        final String key;    // for KEY
+        final String prefix; // for KEY
+        final String suffix; // for KEY
 
-        private LineEntry(LineType type, String text) {
+        private LineEntry(LineType type, String text, String key, String prefix, String suffix) {
             this.type = type;
             this.text = text;
+            this.key = key;
+            this.prefix = prefix;
+            this.suffix = suffix;
         }
 
         static LineEntry empty() {
-            return new LineEntry(LineType.EMPTY, null);
+            return new LineEntry(LineType.EMPTY, null, null, null, null);
         }
 
         static LineEntry comment(String line) {
-            return new LineEntry(LineType.COMMENT, line);
+            return new LineEntry(LineType.COMMENT, line, null, null, null);
         }
 
-        static LineEntry key(String key) {
-            return new LineEntry(LineType.KEY, key);
+        static LineEntry raw(String line) {
+            return new LineEntry(LineType.RAW, line, null, null, null);
+        }
+
+        static LineEntry key(String key, String prefix, String suffix) {
+            return new LineEntry(LineType.KEY, null, key, prefix, suffix);
         }
     }
 }

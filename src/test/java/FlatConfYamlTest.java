@@ -13,12 +13,11 @@ class FlatConfYamlTest {
     private static final String RECONSTRUCTED_CONF_YAML = "src/test/resources/flat_mapper/yaml/reconstructed_custom_property.conf.yml";
     private static final String INPUT_7 = "src/test/resources/flat_mapper/yaml/input_7.conf.yml";
 
-    private final FlatConfYaml flatConfYaml = new FlatConfYaml();
 
     @Test
     void flatToMap_flattensCorrectly() throws Exception {
         var inputData = Files.readString(Paths.get(INPUT_CONF_YAML));
-        var items = flatConfYaml.flatToMap(inputData);
+        var items = new FlatConfYaml().flatToMap(inputData);
         var expectedData = Files.readAllLines(Paths.get(FLAT_CONF_YAML))
                 .stream()
                 .map(x -> x.split(":\\s", 2))
@@ -33,8 +32,8 @@ class FlatConfYamlTest {
     @Test
     void flatToString_unflattensCorrectly() throws Exception {
         var inputData = Files.readString(Paths.get(INPUT_CONF_YAML));
-        var items = flatConfYaml.flatToMap(inputData);
-        var actual = flatConfYaml.flatToString(items);
+        var items = new FlatConfYaml().flatToMap(inputData);
+        var actual = new FlatConfYaml().flatToString(items);
         var expected = Files.readString(Paths.get(RECONSTRUCTED_CONF_YAML));
         assertEquals(expected, actual);
     }

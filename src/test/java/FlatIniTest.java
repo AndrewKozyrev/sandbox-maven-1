@@ -24,12 +24,11 @@ class FlatIniTest {
     private static final String EXPECTED_5 = "src/test/resources/flat_mapper/ini/expected_5";
     private static final String EXPECTED_6 = "src/test/resources/flat_mapper/ini/expected_6";
 
-    private final FlatIni flatIni = new FlatIni();
 
     @Test
     void flatToMap_flattensCorrectly() throws Exception {
         var inputData = Files.readString(Paths.get(ORIGINAL_1_INI));
-        var items = flatIni.flatToMap(inputData);
+        var items = new FlatIni().flatToMap(inputData);
         var expectedData = Files.readAllLines(Paths.get(FLAT_ORIGINAL_1))
                 .stream()
                 .map(x -> x.split("\\s*=\\s*", 2))
@@ -44,8 +43,8 @@ class FlatIniTest {
     @Test
     void flatToString_unflattensCorrectly() throws Exception {
         var inputData = Files.readString(Paths.get(ORIGINAL_1_INI));
-        var items = flatIni.flatToMap(inputData);
-        var actual = flatIni.flatToString(items);
+        var items = new FlatIni().flatToMap(inputData);
+        var actual = new FlatIni().flatToString(items);
         var expected = Files.readString(Paths.get(RECONSTRUCTED_ORIGINAL_1));
         assertEquals(expected, actual);
     }
@@ -53,7 +52,7 @@ class FlatIniTest {
     @Test
     void flatToMap_singleParameter() throws Exception {
         var inputData = Files.readString(Paths.get(INPUT_2));
-        var items = flatIni.flatToMap(inputData);
+        var items = new FlatIni().flatToMap(inputData);
         assertNotNull(items.get("param1"));
         assertEquals("value1", items.get("param1").getValue());
     }
@@ -61,7 +60,7 @@ class FlatIniTest {
     @Test
     void flatToMap_correctOrderOfParams() throws Exception {
         var inputData = Files.readString(Paths.get(INPUT_3));
-        var items = flatIni.flatToMap(inputData);
+        var items = new FlatIni().flatToMap(inputData);
         var actual = new ArrayList<>(items.values());
         var expected = Files.readAllLines(Paths.get(EXPECTED_3))
                 .stream()
@@ -81,7 +80,7 @@ class FlatIniTest {
     @Test
     void flatToMap_commentsMapping() throws Exception {
         var inputData = Files.readString(Paths.get(INPUT_3));
-        var map = flatIni.flatToMap(inputData);
+        var map = new FlatIni().flatToMap(inputData);
         assertEquals("Имя кластера", map.get("all:vars[0]").getComment());
         assertEquals("хост под Sberl & PES", map.get("blue[0].tslds-efs002596.ufsflcore.delta.sbrf.ru").getComment());
         assertEquals("хост под Sberl & PES", map.get("green[0].tslds-efs002603.ufsflcore.delta.sbrf.ru").getComment());
@@ -109,7 +108,7 @@ class FlatIniTest {
         map.put("key2", item2);
         map.put("key3", item3);
 
-        var actual = flatIni.flatToString(map);
+        var actual = new FlatIni().flatToString(map);
 
         var expected = Files.readString(Paths.get(EXPECTED_4));
 
@@ -119,9 +118,9 @@ class FlatIniTest {
     @Test
     void flatToString_removeParameter() throws Exception {
         var inputData = Files.readString(Paths.get(ORIGINAL_1_INI));
-        var items = flatIni.flatToMap(inputData);
+        var items = new FlatIni().flatToMap(inputData);
         items.remove("green[0].tslds-efs002569.ufsflcore.delta.sbrf.ru");
-        var actual = flatIni.flatToString(items);
+        var actual = new FlatIni().flatToString(items);
         var expected = Files.readString(Paths.get(EXPECTED_2));
         assertEquals(expected, actual);
     }
@@ -150,7 +149,7 @@ class FlatIniTest {
         map.put("section1[1]", item2);
         map.put("section1[2]", item3);
 
-        var actual = flatIni.flatToString(map);
+        var actual = new FlatIni().flatToString(map);
         var expected = Files.readString(Paths.get(EXPECTED_5));
         assertEquals(expected, actual);
     }
@@ -158,12 +157,12 @@ class FlatIniTest {
     @Test
     void toFlatThenToString_keepsOrder() throws Exception {
         var inputData = Files.readString(Paths.get(INPUT_3));
-        var map = flatIni.flatToMap(inputData);
+        var map = new FlatIni().flatToMap(inputData);
 
         var newMap = new LinkedHashMap<>(map);
         newMap.get("all:vars[0]").setValue("was_cluster_name=\"value1\"");
 
-        var actual = flatIni.flatToString(newMap);
+        var actual = new FlatIni().flatToString(newMap);
         var expected = Files.readString(Paths.get(EXPECTED_6));
         assertEquals(expected, actual);
     }
