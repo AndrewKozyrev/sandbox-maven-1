@@ -103,17 +103,15 @@ public class FlatYaml implements FlatService {
         Map<String, String> specials = new LinkedHashMap<>();
         Map<String, Object> inputMap = new LinkedHashMap<>();
         for (FileDataItem item : data.values()) {
-            if (item == null) {
-                continue;
+            if (item != null) {
+                String key = item.getKey();
+                if (key != null) {
+                    Object raw = item.getValue();
+                    String str = (raw == null) ? "" : raw.toString();
+                    ScalarSpec spec = parseScalarSpec(str, specials);
+                    inputMap.put(key, spec);
+                }
             }
-            String key = item.getKey();
-            if (key == null) {
-                continue;
-            }
-            Object raw = item.getValue();
-            String str = (raw == null) ? "" : raw.toString();
-            ScalarSpec spec = parseScalarSpec(str, specials);
-            inputMap.put(key, spec);
         }
 
         Map<String, Object> root = new LinkedHashMap<>();
@@ -146,7 +144,7 @@ public class FlatYaml implements FlatService {
 
     @Override
     public void validate(Map<String, FileDataItem> data) {
-        throw new NotImplementedException("Валидация YAML файлов не реализована.");
+        throw new NotImplementedException("Р’Р°Р»РёРґР°С†РёСЏ YAML С„Р°Р№Р»РѕРІ РЅРµ СЂРµР°Р»РёР·РѕРІР°РЅР°.");
     }
 
     private Map<String, Object> flatten(Node node, String parentKey) {
@@ -276,50 +274,54 @@ public class FlatYaml implements FlatService {
 
     @SuppressWarnings("unchecked")
     private void putPath(Object container, String[] parts, int index, Object value) {
-        String part = parts[index];
-        boolean last = (index == parts.length - 1);
+        Object current = container;
+        for (int i = index; i < parts.length; i++) {
+            String part = parts[i];
+            boolean last = (i == parts.length - 1);
+            String nextPart = last ? null : parts[i + 1];
 
-        if (isInteger(part)) {
-            int arrayIndex = Integer.parseInt(part);
-            List<Object> list = (List<Object>) container;
-
-            while (list.size() <= arrayIndex) {
-                list.add(null);
-            }
-
-            if (last) {
-                list.set(arrayIndex, value);
+            if (isInteger(part)) {
+                int arrayIndex = Integer.parseInt(part);
+                current = putToList((List<Object>) current, arrayIndex, last, nextPart, value);
             } else {
-                Object child = list.get(arrayIndex);
-                if (child == null) {
-                    String nextPart = parts[index + 1];
-                    Object newChild = isInteger(nextPart)
-                            ? new ArrayList<>()
-                            : new LinkedHashMap<String, Object>();
-                    list.set(arrayIndex, newChild);
-                    child = newChild;
-                }
-                putPath(child, parts, index + 1, value);
-            }
-
-        } else {
-            Map<String, Object> map = (Map<String, Object>) container;
-
-            if (last) {
-                map.put(part, value);
-            } else {
-                Object child = map.get(part);
-                if (child == null) {
-                    String nextPart = parts[index + 1];
-                    Object newChild = isInteger(nextPart)
-                            ? new ArrayList<>()
-                            : new LinkedHashMap<String, Object>();
-                    map.put(part, newChild);
-                    child = newChild;
-                }
-                putPath(child, parts, index + 1, value);
+                current = putToMap((Map<String, Object>) current, part, last, nextPart, value);
             }
         }
+    }
+
+    private Object putToList(List<Object> list, int arrayIndex, boolean last, String nextPart, Object value) {
+        ensureListSize(list, arrayIndex);
+        if (last) {
+            list.set(arrayIndex, value);
+            return value;
+        }
+        Object child = list.get(arrayIndex);
+        if (child == null) {
+            child = createContainer(nextPart);
+            list.set(arrayIndex, child);
+        }
+        return child;
+    }
+
+    private Object putToMap(Map<String, Object> map, String key, boolean last, String nextPart, Object value) {
+        if (last) {
+            map.put(key, value);
+            return value;
+        }
+        return map.computeIfAbsent(key, k -> createContainer(nextPart));
+    }
+
+    private void ensureListSize(List<Object> list, int arrayIndex) {
+        while (list.size() <= arrayIndex) {
+            list.add(null);
+        }
+    }
+
+    private Object createContainer(String nextPart) {
+        if (nextPart != null && isInteger(nextPart)) {
+            return new ArrayList<Object>();
+        }
+        return new LinkedHashMap<String, Object>();
     }
 
     private static boolean isInteger(String s) {
