@@ -34,6 +34,9 @@ class FlatIniTest {
                 .map(x -> x.split("\\s*=\\s*", 2))
                 .collect(Collectors.toMap(x -> x[0], y -> y.length > 1 ? y[1] : ""));
         for (String key : items.keySet()) {
+            if (key.equals("\u0000__flat_ini_meta__")) {
+                continue;
+            }
             var expectedValue = expectedData.get(key);
             var actualValue = items.get(key).getValue().toString();
             assertEquals(expectedValue, actualValue);
