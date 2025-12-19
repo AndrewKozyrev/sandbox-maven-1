@@ -13,7 +13,6 @@ class FlatConfYamlTest {
     private static final String RECONSTRUCTED_CONF_YAML = "src/test/resources/flat_mapper/yaml/reconstructed_custom_property.conf.yml";
     private static final String INPUT_7 = "src/test/resources/flat_mapper/yaml/input_7.conf.yml";
 
-
     @Test
     void flatToMap_flattensCorrectly() throws Exception {
         var inputData = Files.readString(Paths.get(INPUT_CONF_YAML));
@@ -23,9 +22,10 @@ class FlatConfYamlTest {
                 .map(x -> x.split(":\\s", 2))
                 .collect(Collectors.toMap(x -> x[0], y -> y[1]));
         for (String key : items.keySet()) {
+            if (key.equals("\u0000__flat_conf_yml_meta__")) continue;
             var expectedValue = expectedData.get(key);
             var actualValue = items.get(key).getValue().toString();
-            assertEquals(expectedValue, actualValue);
+            assertEquals(expectedValue, actualValue, String.format("Key = %s", key));
         }
     }
 
