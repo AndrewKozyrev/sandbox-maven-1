@@ -92,10 +92,11 @@ public class FlatIni implements FlatService {
 
     private static String dumpWithStructure(Map<String, FileDataItem> data, MetaState meta, String ls) {
         StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < meta.structure.size(); i++) {
-            LineEntry e = meta.structure.get(i);
+        List<LineEntry> structure = meta.structure;
+        for (int i = 0; i < structure.size(); i++) {
+            LineEntry e = structure.get(i);
             if (e != null) {
-                appendEntry(sb, e, data, meta.sectioned, ls);
+                appendEntry(sb, e, data, meta.sectioned, ls, structure, i);
             }
         }
         return sb.toString();
@@ -106,7 +107,9 @@ public class FlatIni implements FlatService {
             LineEntry e,
             Map<String, FileDataItem> data,
             boolean sectioned,
-            String ls
+            String ls,
+            List<LineEntry> structure,
+            int index
     ) {
         if (e.type == LineType.SECTION || e.type == LineType.COMMENT) {
             sb.append(nvl(e.text)).append(ls);
@@ -117,7 +120,7 @@ public class FlatIni implements FlatService {
             return;
         }
         if (e.type == LineType.DATA) {
-            appendData(sb, e, data, sectioned, ls);
+            appendData(sb, e, data, sectioned, ls, structure, index);
         }
     }
 
@@ -126,7 +129,9 @@ public class FlatIni implements FlatService {
             LineEntry e,
             Map<String, FileDataItem> data,
             boolean sectioned,
-            String ls
+            String ls,
+            List<LineEntry> structure,
+            int index
     ) {
         String key = e.key;
         if (key == null) {
@@ -142,8 +147,50 @@ public class FlatIni implements FlatService {
             return;
         }
 
+        if (shouldInsertNewComment(structure, index, item)) {
+            appendNewComment(sb, item.getComment(), ls);
+        }
+
         String value = safeValue(item);
         sb.append(nvl(e.prefix)).append(value).append(nvl(e.suffix)).append(ls);
+    }
+
+    private static boolean shouldInsertNewComment(List<LineEntry> structure, int index, FileDataItem item) {
+        String c = item == null ? null : item.getComment();
+        if (c == null || c.isBlank()) {
+            return false;
+        }
+        return !hasExistingCommentBlock(structure, index);
+    }
+
+    private static boolean hasExistingCommentBlock(List<LineEntry> structure, int dataIndex) {
+        int i = dataIndex - 1;
+        while (i >= 0) {
+            LineEntry prev = structure.get(i);
+            if (prev == null || prev.type == LineType.EMPTY) {
+                i--;
+            } else {
+                return prev.type == LineType.COMMENT;
+            }
+        }
+        return false;
+    }
+
+    private static void appendNewComment(StringBuilder sb, String comment, String ls) {
+        if (comment == null || comment.isBlank()) {
+            return;
+        }
+        String[] lines = comment.split("\\R", -1);
+        for (String line : lines) {
+            if (line != null && !line.isBlank()) {
+                if (line.startsWith("#") || line.startsWith(";")) {
+                    sb.append(line);
+                } else {
+                    sb.append("#").append(line);
+                }
+                sb.append(ls);
+            }
+        }
     }
 
     private static String dumpFallback(Map<String, FileDataItem> data, String ls) {
@@ -187,7 +234,8 @@ public class FlatIni implements FlatService {
             return;
         }
         String[] parts = comment.split("\\R", -1);
-        for (String p : parts) {
+        for (int i = 0; i < parts.length; i++) {
+            String p = parts[i];
             if (p != null) {
                 String t = p.trim();
                 if (!t.isEmpty()) {
@@ -205,24 +253,20 @@ public class FlatIni implements FlatService {
         String currentSection = null;
 
         for (SectionedItem it : items) {
-            if (it == null) {
-                continue;
-            }
+            if (it != null) {
+                if (!it.section.equals(currentSection)) {
+                    currentSection = it.section;
+                    sb.append("[").append(currentSection).append("]").append(ls);
+                }
 
-            if (!it.section.equals(currentSection)) {
-                currentSection = it.section;
-                sb.append("[").append(currentSection).append("]").append(ls);
-            }
+                FileDataItem item = data.get(it.originalKey);
+                if (item != null) {
+                    appendCommentIfAny(sb, item.getComment(), ls);
 
-            FileDataItem item = data.get(it.originalKey);
-            if (item == null) {
-                continue;
-            }
-
-            appendCommentIfAny(sb, item.getComment(), ls);
-
-            if (!isEmptySectionPlaceholder(it.originalKey, item)) {
-                appendSectionedFallbackValue(sb, it, safeValue(item), ls);
+                    if (!isEmptySectionPlaceholder(it.originalKey, item)) {
+                        appendSectionedFallbackValue(sb, it, safeValue(item), ls);
+                    }
+                }
             }
         }
 
@@ -372,17 +416,16 @@ public class FlatIni implements FlatService {
 
         for (int i = 0; i < meta.structure.size(); i++) {
             LineEntry e = meta.structure.get(i);
-            if (e == null) {
-                continue;
+            if (e != null) {
+                sb.append(e.type.code).append("|");
+                if (e.type == LineType.DATA) {
+                    String payload = nvl(e.key) + FIELD_SEP + nvl(e.prefix) + FIELD_SEP + nvl(e.suffix);
+                    sb.append(encodePayload(payload));
+                } else if (e.type == LineType.SECTION || e.type == LineType.COMMENT) {
+                    sb.append(encodePayload(nvl(e.text)));
+                }
+                sb.append("\n");
             }
-            sb.append(e.type.code).append("|");
-            if (e.type == LineType.DATA) {
-                String payload = nvl(e.key) + FIELD_SEP + nvl(e.prefix) + FIELD_SEP + nvl(e.suffix);
-                sb.append(encodePayload(payload));
-            } else if (e.type == LineType.SECTION || e.type == LineType.COMMENT) {
-                sb.append(encodePayload(nvl(e.text)));
-            }
-            sb.append("\n");
         }
 
         return Base64.getEncoder().encodeToString(sb.toString().getBytes(StandardCharsets.UTF_8));
@@ -551,7 +594,7 @@ public class FlatIni implements FlatService {
             }
 
             if (sectioned && isSectionHeader(trimmed)) {
-                switchSection(rawLine, trimmed, out);
+                switchSection(trimmed, out, rawLine);
                 return;
             }
 
@@ -566,7 +609,7 @@ public class FlatIni implements FlatService {
             finishSectionIfEmpty(out);
         }
 
-        private void switchSection(String rawLine, String trimmedLine, Map<String, FileDataItem> out) {
+        private void switchSection(String trimmedLine, Map<String, FileDataItem> out, String rawLine) {
             finishSectionIfEmpty(out);
             currentSection = extractSectionName(trimmedLine);
             indexInSection = 0;
@@ -657,7 +700,8 @@ public class FlatIni implements FlatService {
                 return "";
             }
             StringBuilder sb = new StringBuilder();
-            for (String s : pendingMetaComments) {
+            for (int i = 0; i < pendingMetaComments.size(); i++) {
+                String s = pendingMetaComments.get(i);
                 String t = s == null ? "" : s.trim();
                 if (!t.isEmpty()) {
                     if (sb.length() > 0) {

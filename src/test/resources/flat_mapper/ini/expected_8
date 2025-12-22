@@ -1,0 +1,37 @@
+[all:vars]
+
+[local]
+localhost ansible_connection=local
+
+[blue]
+#хост под Sberl
+tslds-efs000346.ufsflcore.delta.sbrf.ru ansible_host=tslds-efs000346.ufsflcore.delta.sbrf.ru ansible_user="{{ SSD_SSH_USER }}" ansible_ssh_private_key_file="{{ vm_ssd_ssh_cred }}"
+
+
+[green]
+#хост под Sberl
+tslds-efs000347.ufsflcore.delta.sbrf.ru ansible_host=tslds-efs000347.ufsflcore.delta.sbrf.ru ansible_user="{{ SSD_SSH_USER }}" ansible_ssh_private_key_file="{{ vm_ssd_ssh_cred }}"
+
+[vm_sds_master:children]
+blue
+#new_comment
+new_value
+
+[nginx_mm]
+
+tslds-efs002100.ufsflcore.delta.sbrf.ru
+[nginx_node_mm]
+#VM
+tslds-efs000346.ufsflcore.delta.sbrf.ru
+tslds-efs000347.ufsflcore.delta.sbrf.ru
+
+
+[hosts:children]
+local
+nginx_mm
+vm_sds_master
+
+[secure:children]
+local
+nginx_mm
+vm_sds_master
