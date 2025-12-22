@@ -43,7 +43,7 @@ public class FlatIni implements FlatService {
         FileDataItem metaItem = new FileDataItem();
         metaItem.setKey(META_KEY);
         metaItem.setValue(encodeMeta(meta));
-        result.putInternal(META_KEY, metaItem);
+        result.putInternal(metaItem);
 
         return result;
     }
@@ -79,8 +79,7 @@ public class FlatIni implements FlatService {
     }
 
     private static boolean looksLikeSectionedIni(List<String> lines) {
-        for (int i = 0; i < lines.size(); i++) {
-            String line = lines.get(i);
+        for (String line : lines) {
             if (line != null) {
                 String trimmed = line.trim();
                 if (!trimmed.isEmpty() && !isCommentLine(trimmed)) {
@@ -173,8 +172,7 @@ public class FlatIni implements FlatService {
         Collections.sort(keys);
 
         StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < keys.size(); i++) {
-            String k = keys.get(i);
+        for (String k : keys) {
             FileDataItem item = data.get(k);
             if (item != null) {
                 appendCommentIfAny(sb, item.getComment(), ls);
@@ -189,8 +187,7 @@ public class FlatIni implements FlatService {
             return;
         }
         String[] parts = comment.split("\\R", -1);
-        for (int i = 0; i < parts.length; i++) {
-            String p = parts[i];
+        for (String p : parts) {
             if (p != null) {
                 String t = p.trim();
                 if (!t.isEmpty()) {
@@ -207,13 +204,12 @@ public class FlatIni implements FlatService {
         StringBuilder sb = new StringBuilder();
         String currentSection = null;
 
-        for (int i = 0; i < items.size(); i++) {
-            SectionedItem it = items.get(i);
+        for (SectionedItem it : items) {
             if (it == null) {
                 continue;
             }
 
-            if (currentSection == null || !it.section.equals(currentSection)) {
+            if (!it.section.equals(currentSection)) {
                 currentSection = it.section;
                 sb.append("[").append(currentSection).append("]").append(ls);
             }
@@ -328,7 +324,7 @@ public class FlatIni implements FlatService {
     }
 
     private static String detectLineSeparator(String data) {
-        if (data.indexOf("\r\n") >= 0) {
+        if (data.contains("\r\n")) {
             return "\r\n";
         }
         if (data.indexOf('\n') >= 0) {
@@ -916,8 +912,8 @@ public class FlatIni implements FlatService {
 
     private static final class MetaHidingMap extends LinkedHashMap<String, FileDataItem> {
 
-        void putInternal(String key, FileDataItem value) {
-            super.put(key, value);
+        void putInternal(FileDataItem value) {
+            super.put(FlatIni.META_KEY, value);
         }
 
         @Override
