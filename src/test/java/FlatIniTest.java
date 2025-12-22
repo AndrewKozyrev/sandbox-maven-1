@@ -177,7 +177,7 @@ class FlatIniTest {
         var map = new FlatIni().flatToMap(inputData);
 
         map.get("vm_sds_master:children[0]").setValue("blue true");
-        map.get("vm_sds_master:children[0]").setComment("## NEW COMMENT WITH EDIT PARAM");
+        map.get("vm_sds_master:children[0]").setComment("NEW COMMENT WITH EDIT PARAM");
 
         var actual = new FlatIni().flatToString(map);
         var expected = Files.readString(Paths.get(EXPECTED_7));
