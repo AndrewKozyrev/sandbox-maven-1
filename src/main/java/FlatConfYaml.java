@@ -24,14 +24,36 @@ public class FlatConfYaml implements FlatService {
             return result;
         }
 
-        ParseInput input = parseInputText(data);
-        State state = new State(input.endsWithNewline, input.lineSeparator, DEFAULT_LS);
-        parseLines(input.lines, result, state);
+        ParseInput input = ParseInput.from(data);
+        ParseState ps = new ParseState();
+        State st = new State(input.endsWithNewline, input.lineSeparator);
+
+        for (String line : input.lines) {
+            if (line == null) {
+                continue;
+            }
+            if (handleEmpty(line, ps, st)) {
+                continue;
+            }
+            if (handleComment(line, ps, st)) {
+                continue;
+            }
+            if (handleContinuation(line, ps)) {
+                continue;
+            }
+            if (handleTopLevelKey(line, ps, result, st)) {
+                continue;
+            }
+            st.structure.add(LineEntry.raw(line));
+            ps.pendingMeta.setLength(0);
+        }
+
+        commitCurrent(result, ps);
 
         FileDataItem metaItem = new FileDataItem();
         metaItem.setKey(META_KEY);
-        metaItem.setValue(encodeMeta(state));
-        result.putInternal(META_KEY, metaItem);
+        metaItem.setValue(encodeMeta(st));
+        result.putInternal(metaItem);
 
         return result;
     }
@@ -42,14 +64,15 @@ public class FlatConfYaml implements FlatService {
             return "";
         }
 
-        State state = readMetaState(data);
-        if (state == null || state.structure.isEmpty()) {
+        State st = readMetaState(data);
+        if (st == null || st.structure.isEmpty()) {
             return dumpFallback(data, DEFAULT_LS);
         }
 
-        String out = dumpWithStructure(data, state, DEFAULT_LS);
-        if (!state.originalEndsWithNewline) {
-            out = trimTrailingIfNeeded(out, state.lineSeparator);
+        String ls = st.lineSeparator == null ? DEFAULT_LS : st.lineSeparator;
+        String out = dumpWithStructure(data, st, ls);
+        if (!st.originalEndsWithNewline) {
+            out = trimTrailingIfNeeded(out, ls);
         }
         return out;
     }
@@ -59,73 +82,136 @@ public class FlatConfYaml implements FlatService {
         throw new NotImplementedException("Validation of .conf.yml files is not implemented yet.");
     }
 
-    private static ParseInput parseInputText(String data) {
-        String lineSeparator = detectLineSeparator(data);
-        boolean endsWithNewline = data.endsWith("\n") || data.endsWith("\r");
-        String[] raw = data.split("\\R", -1);
-        List<String> lines = new ArrayList<String>();
-        Collections.addAll(lines, raw);
-        if (endsWithNewline && !lines.isEmpty() && lines.get(lines.size() - 1).isEmpty()) {
-            lines.remove(lines.size() - 1);
+    private static String dumpWithStructure(Map<String, FileDataItem> data, State st, String ls) {
+        StringBuilder sb = new StringBuilder();
+        Set<String> seenKeys = new LinkedHashSet<String>();
+
+        for (LineEntry e : st.structure) {
+            if (e == null) {
+                continue;
+            }
+            if (e.type == EntryType.KEY) {
+                if (e.key != null) {
+                    seenKeys.add(e.key);
+                }
+                appendKeyLine(sb, e, data, ls);
+                continue;
+            }
+            appendNonKeyLine(sb, e, ls);
         }
-        return new ParseInput(lines, lineSeparator, endsWithNewline);
+
+        appendExtraKeys(sb, data, seenKeys, ls);
+        return sb.toString();
     }
 
-    private static void parseLines(List<String> lines, Map<String, FileDataItem> result, State state) {
-        ParseState ps = new ParseState();
-        for (int i = 0; i < lines.size(); i++) {
-            String line = lines.get(i);
+    private static void appendKeyLine(StringBuilder sb, LineEntry e, Map<String, FileDataItem> data, String ls) {
+        FileDataItem item = data.get(e.key);
+        if (item == null) {
+            return;
+        }
+        String v = safeValue(item);
+        sb.append(nvl(e.prefix)).append(v).append(nvl(e.suffix)).append(ls);
+    }
+
+    private static void appendNonKeyLine(StringBuilder sb, LineEntry e, String ls) {
+        if (e.type == EntryType.EMPTY) {
+            sb.append(ls);
+            return;
+        }
+        if (e.type == EntryType.COMMENT || e.type == EntryType.RAW) {
+            sb.append(nvl(e.text)).append(ls);
+        }
+    }
+
+    private static void appendExtraKeys(StringBuilder sb, Map<String, FileDataItem> data, Set<String> seenKeys, String ls) {
+        List<String> extras = new ArrayList<String>();
+        for (String k : data.keySet()) {
+            if (k == null || META_KEY.equals(k) || seenKeys.contains(k)) {
+                continue;
+            }
+            extras.add(k);
+        }
+        if (extras.isEmpty()) {
+            return;
+        }
+
+        Collections.sort(extras);
+
+        for (String k : extras) {
+            FileDataItem item = data.get(k);
+            if (item == null) {
+                continue;
+            }
+            appendItemAsYaml(sb, k, item, ls);
+        }
+    }
+
+    private static void appendItemAsYaml(StringBuilder sb, String key, FileDataItem item, String ls) {
+        String c = item.getComment();
+        if (c != null && !c.isBlank()) {
+            appendCommentBlock(sb, c, ls);
+        }
+        sb.append(key).append(": ").append(safeValue(item)).append(ls);
+    }
+
+    private static void appendCommentBlock(StringBuilder sb, String comment, String ls) {
+        String[] lines = comment.split("\\R", -1);
+        for (String line : lines) {
             if (line == null) {
                 continue;
             }
-            boolean handled = tryHandleEmptyLine(line, ps, state);
-            if (!handled) {
-                handled = tryHandleCommentLine(line, ps, state);
+            if (line.isBlank()) {
+                sb.append(ls);
+                continue;
             }
-            if (!handled) {
-                handled = tryHandleContinuation(line, ps);
-            }
-            if (!handled) {
-                handled = tryHandleTopLevelKey(line, ps, result, state);
-            }
-            if (!handled) {
-                state.structure.add(LineEntry.raw(line));
-                ps.pendingMeta.setLength(0);
+            if (line.startsWith("#")) {
+                sb.append(line).append(ls);
+            } else {
+                sb.append("#").append(line).append(ls);
             }
         }
-        commitCurrent(result, ps);
     }
 
-    private static boolean tryHandleEmptyLine(String line, ParseState ps, State state) {
+    private static String dumpFallback(Map<String, FileDataItem> data, String ls) {
+        List<String> keys = new ArrayList<String>();
+        for (String k : data.keySet()) {
+            if (k != null && !META_KEY.equals(k)) {
+                keys.add(k);
+            }
+        }
+        Collections.sort(keys);
+
+        StringBuilder sb = new StringBuilder();
+        for (String k : keys) {
+            FileDataItem item = data.get(k);
+            if (item == null) {
+                continue;
+            }
+            appendItemAsYaml(sb, k, item, ls);
+        }
+        return sb.toString();
+    }
+
+    private static boolean handleEmpty(String line, ParseState ps, State st) {
         if (!line.trim().isEmpty()) {
             return false;
         }
-        state.structure.add(LineEntry.empty());
+        st.structure.add(LineEntry.empty());
         ps.pendingMeta.setLength(0);
         return true;
     }
 
-    private static boolean tryHandleCommentLine(String line, ParseState ps, State state) {
+    private static boolean handleComment(String line, ParseState ps, State st) {
         String trimmed = line.trim();
         if (!trimmed.startsWith("#")) {
             return false;
         }
-        state.structure.add(LineEntry.comment(line));
+        st.structure.add(LineEntry.comment(line));
         appendPendingMeta(ps.pendingMeta, trimmed.substring(1).trim());
         return true;
     }
 
-    private static void appendPendingMeta(StringBuilder pendingMeta, String metaLine) {
-        if (metaLine == null) {
-            return;
-        }
-        if (pendingMeta.length() > 0) {
-            pendingMeta.append('\n');
-        }
-        pendingMeta.append(metaLine);
-    }
-
-    private static boolean tryHandleContinuation(String line, ParseState ps) {
+    private static boolean handleContinuation(String line, ParseState ps) {
         if (ps.currentKey == null) {
             return false;
         }
@@ -139,90 +225,50 @@ public class FlatConfYaml implements FlatService {
         return true;
     }
 
-    private static boolean startsWithIndent(String line) {
-        if (line.isEmpty()) {
-            return false;
-        }
-        char c0 = line.charAt(0);
-        return c0 == ' ' || c0 == '\t';
-    }
-
-    private static boolean tryHandleTopLevelKey(String line, ParseState ps, Map<String, FileDataItem> result, State state) {
+    private static boolean handleTopLevelKey(String line, ParseState ps, Map<String, FileDataItem> result, State st) {
         if (!isTopLevelKeyLine(line)) {
             return false;
         }
         commitCurrent(result, ps);
+
         TopKeyParts parts = splitTopLevelKey(line);
         if (parts == null) {
-            state.structure.add(LineEntry.raw(line));
+            st.structure.add(LineEntry.raw(line));
             ps.pendingMeta.setLength(0);
             return true;
         }
+
         ps.currentKey = parts.key;
         ps.currentPrefix = parts.prefix;
         ps.currentSuffix = parts.suffix;
         ps.currentValue = new StringBuilder(parts.value);
-        state.structure.add(LineEntry.forKey(ps.currentKey, ps.currentPrefix, ps.currentSuffix));
+        st.structure.add(LineEntry.forKey(ps.currentKey, ps.currentPrefix, ps.currentSuffix));
         return true;
     }
 
-    private static TopKeyParts splitTopLevelKey(String line) {
-        int colonIdx = line.indexOf(':');
-        if (colonIdx <= 0) {
-            return null;
+    private static void appendPendingMeta(StringBuilder pendingMeta, String metaLine) {
+        if (metaLine == null) {
+            return;
         }
-        String keyRaw = line.substring(0, colonIdx);
-        String key = keyRaw.trim();
-        if (key.isEmpty()) {
-            return null;
+        if (pendingMeta.length() > 0) {
+            pendingMeta.append('\n');
         }
-        String afterColon = line.substring(colonIdx + 1);
-        int commentIdx = findInlineCommentIndex(afterColon);
-        String nonCommentPart = commentIdx >= 0 ? afterColon.substring(0, commentIdx) : afterColon;
-        String commentPart = commentIdx >= 0 ? afterColon.substring(commentIdx) : "";
-        Range trimmedRange = trimRange(nonCommentPart);
-
-        String valueText = "";
-        String prefixSpaces = "";
-        String suffixSpaces = "";
-        if (trimmedRange != null) {
-            int valueStart = trimmedRange.start;
-            int valueEnd = trimmedRange.end;
-            prefixSpaces = nonCommentPart.substring(0, valueStart);
-            suffixSpaces = nonCommentPart.substring(valueEnd);
-            valueText = nonCommentPart.substring(valueStart, valueEnd).trim();
-        }
-
-        String prefix = line.substring(0, colonIdx + 1) + prefixSpaces;
-        String suffix = suffixSpaces + commentPart;
-        return new TopKeyParts(key, prefix, suffix, valueText);
-    }
-
-    private static Range trimRange(String s) {
-        if (s == null) {
-            return null;
-        }
-        int start = 0;
-        while (start < s.length() && Character.isWhitespace(s.charAt(start))) {
-            start++;
-        }
-        int end = s.length();
-        while (end > start && Character.isWhitespace(s.charAt(end - 1))) {
-            end--;
-        }
-        return new Range(start, end);
+        pendingMeta.append(metaLine);
     }
 
     private static void commitCurrent(Map<String, FileDataItem> result, ParseState ps) {
         if (ps.currentKey == null) {
             return;
         }
+
         FileDataItem item = new FileDataItem();
         item.setKey(ps.currentKey);
         item.setValue(ps.currentValue == null ? "" : ps.currentValue.toString());
+
         if (ps.pendingMeta.length() > 0) {
             item.setComment(ps.pendingMeta.toString());
         }
+
         result.put(ps.currentKey, item);
 
         ps.currentKey = null;
@@ -230,6 +276,14 @@ public class FlatConfYaml implements FlatService {
         ps.currentSuffix = null;
         ps.currentValue = new StringBuilder();
         ps.pendingMeta.setLength(0);
+    }
+
+    private static boolean startsWithIndent(String line) {
+        if (line.isEmpty()) {
+            return false;
+        }
+        char c0 = line.charAt(0);
+        return c0 == ' ' || c0 == '\t';
     }
 
     private static boolean isTopLevelKeyLine(String line) {
@@ -247,6 +301,41 @@ public class FlatConfYaml implements FlatService {
         return idx > 0;
     }
 
+    private static TopKeyParts splitTopLevelKey(String line) {
+        int colonIdx = line.indexOf(':');
+        if (colonIdx <= 0) {
+            return null;
+        }
+
+        String keyRaw = line.substring(0, colonIdx);
+        String key = keyRaw.trim();
+        if (key.isEmpty()) {
+            return null;
+        }
+
+        String afterColon = line.substring(colonIdx + 1);
+        int commentIdx = findInlineCommentIndex(afterColon);
+
+        String nonCommentPart = commentIdx >= 0 ? afterColon.substring(0, commentIdx) : afterColon;
+        String commentPart = commentIdx >= 0 ? afterColon.substring(commentIdx) : "";
+
+        Range trimmed = trimRange(nonCommentPart);
+        String valueText = "";
+        String prefixSpaces = "";
+        String suffixSpaces = "";
+
+        if (trimmed != null) {
+            prefixSpaces = nonCommentPart.substring(0, trimmed.start);
+            suffixSpaces = nonCommentPart.substring(trimmed.end);
+            valueText = nonCommentPart.substring(trimmed.start, trimmed.end).trim();
+        }
+
+        String prefix = line.substring(0, colonIdx + 1) + prefixSpaces;
+        String suffix = suffixSpaces + commentPart;
+
+        return new TopKeyParts(key, prefix, suffix, valueText);
+    }
+
     private static int findInlineCommentIndex(String s) {
         if (s == null || s.isEmpty()) {
             return -1;
@@ -257,109 +346,32 @@ public class FlatConfYaml implements FlatService {
             char ch = s.charAt(i);
             if (ch == '\'' && !inDouble) {
                 inSingle = !inSingle;
-            } else if (ch == '"' && !inSingle) {
+                continue;
+            }
+            if (ch == '"' && !inSingle) {
                 inDouble = !inDouble;
-            } else if (ch == '#' && !inSingle && !inDouble) {
+                continue;
+            }
+            if (ch == '#' && !inSingle && !inDouble) {
                 return i;
             }
         }
         return -1;
     }
 
-    private static String dumpWithStructure(Map<String, FileDataItem> data, State state, String defaultLs) {
-        String ls = state.lineSeparator != null ? state.lineSeparator : defaultLs;
-        StringBuilder sb = new StringBuilder();
-        Set<String> seenKeys = new LinkedHashSet<String>();
-
-        for (int i = 0; i < state.structure.size(); i++) {
-            LineEntry e = state.structure.get(i);
-            if (e == null) {
-                continue;
-            }
-            appendStructuredLine(sb, e, data, ls);
-            if (e.type == EntryType.KEY && e.key != null) {
-                seenKeys.add(e.key);
-            }
+    private static Range trimRange(String s) {
+        if (s == null) {
+            return null;
         }
-
-        appendExtraKeys(sb, data, seenKeys, ls);
-
-        return sb.toString();
-    }
-
-    private static void appendExtraKeys(StringBuilder sb, Map<String, FileDataItem> data, Set<String> seenKeys, String ls) {
-        for (Map.Entry<String, FileDataItem> en : data.entrySet()) {
-            String k = en.getKey();
-            if (k == null || META_KEY.equals(k) || seenKeys.contains(k)) {
-                continue;
-            }
-            FileDataItem item = en.getValue();
-            if (item == null) {
-                continue;
-            }
-            appendItemAsYaml(sb, k, item, ls);
+        int start = 0;
+        while (start < s.length() && Character.isWhitespace(s.charAt(start))) {
+            start++;
         }
-    }
-
-    private static void appendItemAsYaml(StringBuilder sb, String key, FileDataItem item, String ls) {
-        String c = item.getComment();
-        if (c != null && !c.isBlank()) {
-            String[] lines = c.split("\\R", -1);
-            for (int i = 0; i < lines.length; i++) {
-                String line = lines[i];
-                if (line == null) {
-                    continue;
-                }
-                if (line.isBlank()) {
-                    sb.append(ls);
-                } else {
-                    sb.append("#").append(line).append(ls);
-                }
-            }
+        int end = s.length();
+        while (end > start && Character.isWhitespace(s.charAt(end - 1))) {
+            end--;
         }
-        String v = safeValue(item);
-        sb.append(key).append(": ").append(v).append(ls);
-    }
-
-    private static void appendStructuredLine(StringBuilder sb, LineEntry e, Map<String, FileDataItem> data, String ls) {
-        if (e.type == EntryType.EMPTY) {
-            sb.append(ls);
-            return;
-        }
-        if (e.type == EntryType.COMMENT || e.type == EntryType.RAW) {
-            sb.append(e.text).append(ls);
-            return;
-        }
-        if (e.type == EntryType.KEY) {
-            FileDataItem item = data.get(e.key);
-            if (item == null) {
-                return;
-            }
-            String value = safeValue(item);
-            sb.append(e.prefix).append(value).append(e.suffix).append(ls);
-        }
-    }
-
-    private static String dumpFallback(Map<String, FileDataItem> data, String ls) {
-        List<String> keys = new ArrayList<String>();
-        for (String k : data.keySet()) {
-            if (META_KEY.equals(k)) {
-                continue;
-            }
-            keys.add(k);
-        }
-        Collections.sort(keys);
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < keys.size(); i++) {
-            String k = keys.get(i);
-            FileDataItem item = data.get(k);
-            if (item == null) {
-                continue;
-            }
-            String v = safeValue(item);
-            sb.append(k).append(": ").append(v).append(ls);
-        }
-        return sb.toString();
+        return new Range(start, end);
     }
 
     private static String safeValue(FileDataItem item) {
@@ -374,10 +386,16 @@ public class FlatConfYaml implements FlatService {
         if (ls != null && !ls.isEmpty() && out.endsWith(ls)) {
             return out.substring(0, out.length() - ls.length());
         }
-        if (out.endsWith("\n") || out.endsWith("\r")) {
-            return out.substring(0, out.length() - 1);
+        int end = out.length();
+        while (end > 0) {
+            char ch = out.charAt(end - 1);
+            if (ch == '\n' || ch == '\r') {
+                end--;
+            } else {
+                break;
+            }
         }
-        return out;
+        return out.substring(0, end);
     }
 
     private static String detectLineSeparator(String data) {
@@ -393,7 +411,30 @@ public class FlatConfYaml implements FlatService {
         if (idx >= 0) {
             return "\r";
         }
-        return "\n";
+        return DEFAULT_LS;
+    }
+
+    private static String lineSepToken(String ls) {
+        if ("\r\n".equals(ls)) {
+            return "CRLF";
+        }
+        if ("\r".equals(ls)) {
+            return "CR";
+        }
+        return "LF";
+    }
+
+    private static String tokenToLineSep(String token) {
+        if ("CRLF".equals(token)) {
+            return "\r\n";
+        }
+        if ("CR".equals(token)) {
+            return "\r";
+        }
+        if ("LF".equals(token)) {
+            return "\n";
+        }
+        return DEFAULT_LS;
     }
 
     private static String encodeMeta(State st) {
@@ -401,13 +442,7 @@ public class FlatConfYaml implements FlatService {
         sb.append(META_VERSION).append("\n");
         sb.append(st.originalEndsWithNewline ? "1" : "0").append("\n");
         sb.append(lineSepToken(st.lineSeparator)).append("\n");
-        encodeEntries(sb, st.structure);
-        return Base64.getEncoder().encodeToString(sb.toString().getBytes(StandardCharsets.UTF_8));
-    }
-
-    private static void encodeEntries(StringBuilder sb, List<LineEntry> entries) {
-        for (int i = 0; i < entries.size(); i++) {
-            LineEntry e = entries.get(i);
+        for (LineEntry e : st.structure) {
             if (e == null) {
                 continue;
             }
@@ -418,6 +453,7 @@ public class FlatConfYaml implements FlatService {
             }
             sb.append("\n");
         }
+        return Base64.getEncoder().encodeToString(sb.toString().getBytes(StandardCharsets.UTF_8));
     }
 
     private static String encodePayload(LineEntry e) {
@@ -443,10 +479,10 @@ public class FlatConfYaml implements FlatService {
         if (b64.isEmpty()) {
             return null;
         }
-        return decodeMeta(b64, DEFAULT_LS);
+        return decodeMeta(b64);
     }
 
-    private static State decodeMeta(String b64, String defaultLs) {
+    private static State decodeMeta(String b64) {
         try {
             byte[] decoded = Base64.getDecoder().decode(b64);
             String text = new String(decoded, StandardCharsets.UTF_8);
@@ -457,15 +493,18 @@ public class FlatConfYaml implements FlatService {
             if (!META_VERSION.equals(lines[0])) {
                 return null;
             }
+
             boolean endsWithNewline = "1".equals(lines[1]);
-            String ls = tokenToLineSep(lines[2], defaultLs);
-            State st = new State(endsWithNewline, ls, defaultLs);
+            String ls = tokenToLineSep(lines[2]);
+            State st = new State(endsWithNewline, ls);
+
             for (int i = 3; i < lines.length; i++) {
                 LineEntry e = decodeEntry(lines[i]);
                 if (e != null) {
                     st.structure.add(e);
                 }
             }
+
             return st;
         } catch (IllegalArgumentException ex) {
             return null;
@@ -480,12 +519,16 @@ public class FlatConfYaml implements FlatService {
         if (bar < 0) {
             return null;
         }
+
         EntryType type = EntryType.fromCode(line.charAt(0));
         if (type == null) {
             return null;
         }
+
         String payloadB64 = line.substring(bar + 1);
-        String payload = payloadB64.isEmpty() ? "" : new String(Base64.getDecoder().decode(payloadB64), StandardCharsets.UTF_8);
+        String payload = payloadB64.isEmpty()
+                ? ""
+                : new String(Base64.getDecoder().decode(payloadB64), StandardCharsets.UTF_8);
 
         if (type == EntryType.EMPTY) {
             return LineEntry.empty();
@@ -506,29 +549,6 @@ public class FlatConfYaml implements FlatService {
         return null;
     }
 
-    private static String lineSepToken(String ls) {
-        if ("\r\n".equals(ls)) {
-            return "CRLF";
-        }
-        if ("\r".equals(ls)) {
-            return "CR";
-        }
-        return "LF";
-    }
-
-    private static String tokenToLineSep(String token, String defaultLs) {
-        if ("CRLF".equals(token)) {
-            return "\r\n";
-        }
-        if ("CR".equals(token)) {
-            return "\r";
-        }
-        if ("LF".equals(token)) {
-            return "\n";
-        }
-        return defaultLs;
-    }
-
     private static String nvl(String s) {
         return s == null ? "" : s;
     }
@@ -538,10 +558,22 @@ public class FlatConfYaml implements FlatService {
         final String lineSeparator;
         final boolean endsWithNewline;
 
-        ParseInput(List<String> lines, String lineSeparator, boolean endsWithNewline) {
+        private ParseInput(List<String> lines, String lineSeparator, boolean endsWithNewline) {
             this.lines = lines;
             this.lineSeparator = lineSeparator;
             this.endsWithNewline = endsWithNewline;
+        }
+
+        static ParseInput from(String data) {
+            String ls = detectLineSeparator(data);
+            boolean ends = data.endsWith("\n") || data.endsWith("\r");
+            String[] raw = data.split("\\R", -1);
+            List<String> lines = new ArrayList<String>();
+            Collections.addAll(lines, raw);
+            if (ends && !lines.isEmpty() && lines.get(lines.size() - 1).isEmpty()) {
+                lines.remove(lines.size() - 1);
+            }
+            return new ParseInput(lines, ls, ends);
         }
     }
 
@@ -557,7 +589,7 @@ public class FlatConfYaml implements FlatService {
         final int start;
         final int end;
 
-        Range(int start, int end) {
+        private Range(int start, int end) {
             this.start = start;
             this.end = end;
         }
@@ -569,7 +601,7 @@ public class FlatConfYaml implements FlatService {
         final String suffix;
         final String value;
 
-        TopKeyParts(String key, String prefix, String suffix, String value) {
+        private TopKeyParts(String key, String prefix, String suffix, String value) {
             this.key = key;
             this.prefix = prefix;
             this.suffix = suffix;
@@ -582,9 +614,9 @@ public class FlatConfYaml implements FlatService {
         final String lineSeparator;
         final List<LineEntry> structure = new ArrayList<LineEntry>();
 
-        State(boolean originalEndsWithNewline, String lineSeparator, String defaultLs) {
+        private State(boolean originalEndsWithNewline, String lineSeparator) {
             this.originalEndsWithNewline = originalEndsWithNewline;
-            this.lineSeparator = lineSeparator != null ? lineSeparator : defaultLs;
+            this.lineSeparator = lineSeparator == null ? DEFAULT_LS : lineSeparator;
         }
     }
 
@@ -685,8 +717,8 @@ public class FlatConfYaml implements FlatService {
 
     private static final class MetaHidingMap extends LinkedHashMap<String, FileDataItem> {
 
-        void putInternal(String key, FileDataItem value) {
-            super.put(key, value);
+        void putInternal(FileDataItem value) {
+            super.put(FlatConfYaml.META_KEY, value);
         }
 
         @Override
@@ -695,7 +727,7 @@ public class FlatConfYaml implements FlatService {
             if (!base.contains(META_KEY)) {
                 return base;
             }
-            Set<String> out = new LinkedHashSet<>();
+            Set<String> out = new LinkedHashSet<String>();
             for (String k : base) {
                 if (!META_KEY.equals(k)) {
                     out.add(k);
