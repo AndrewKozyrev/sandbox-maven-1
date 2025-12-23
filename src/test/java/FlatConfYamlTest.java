@@ -13,6 +13,7 @@ class FlatConfYamlTest {
     private static final String RECONSTRUCTED_CONF_YAML = "src/test/resources/flat_mapper/yaml/reconstructed_custom_property.conf.yml";
     private static final String INPUT_7 = "src/test/resources/flat_mapper/yaml/input_7.conf.yml";
     private static final String EXPECTED_6 = "src/test/resources/flat_mapper/yaml/expected_6";
+    private static final String EXPECTED_7 = "src/test/resources/flat_mapper/yaml/expected_7";
 
     @Test
     void flatToMap_flattensCorrectly() throws Exception {
@@ -61,6 +62,19 @@ class FlatConfYamlTest {
 
         var actual = new FlatConfYaml().flatToString(items);
         var expected = Files.readString(Paths.get(EXPECTED_6));
+
+        assertEquals(expected, actual);
+    }
+
+    @Test
+    void addingCommentToParameter() throws Exception {
+        var inputData = Files.readString(Paths.get(INPUT_7));
+        var items = new FlatConfYaml().flatToMap(inputData);
+
+        items.get("secrets.app_role_name").setComment("new_comment");
+
+        var actual = new FlatConfYaml().flatToString(items);
+        var expected = Files.readString(Paths.get(EXPECTED_7));
 
         assertEquals(expected, actual);
     }
