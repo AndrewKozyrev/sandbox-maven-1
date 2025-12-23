@@ -12,7 +12,7 @@ import java.util.Set;
 
 public class FlatConfYaml implements FlatService {
 
-    private static final String DEFAULT_LS = "\n";
+    private static final String DEFAULT_LS = System.lineSeparator();
     private static final String META_KEY = "\u0000__flat_conf_yml_meta__";
     private static final String META_VERSION = "V1";
     private static final String FIELD_SEP = "\u0001";
@@ -25,23 +25,23 @@ public class FlatConfYaml implements FlatService {
         }
 
         ParseInput input = ParseInput.from(data);
-        ParseState ps = new ParseState();
         State st = new State(input.endsWithNewline, input.lineSeparator);
+        ParseState ps = new ParseState();
 
         for (String line : input.lines) {
             if (line == null) {
                 continue;
             }
-            if (handleEmpty(line, ps, st)) {
+            if (handleEmptyLine(line, ps, st)) {
                 continue;
             }
-            if (handleComment(line, ps, st)) {
+            if (handleCommentLine(line, ps, st)) {
                 continue;
             }
-            if (handleContinuation(line, ps)) {
+            if (handleContinuationLine(line, ps)) {
                 continue;
             }
-            if (handleTopLevelKey(line, ps, result, st)) {
+            if (handleTopLevelKeyLine(line, ps, result, st)) {
                 continue;
             }
             st.structure.add(LineEntry.raw(line));
@@ -69,11 +69,13 @@ public class FlatConfYaml implements FlatService {
             return dumpFallback(data, DEFAULT_LS);
         }
 
-        String ls = st.lineSeparator == null ? DEFAULT_LS : st.lineSeparator;
+        String ls = st.lineSeparator;
         String out = dumpWithStructure(data, st, ls);
+
         if (!st.originalEndsWithNewline) {
-            out = trimTrailingIfNeeded(out, ls);
+            out = trimTrailingLineSep(out, ls);
         }
+
         return out;
     }
 
@@ -84,7 +86,7 @@ public class FlatConfYaml implements FlatService {
 
     private static String dumpWithStructure(Map<String, FileDataItem> data, State st, String ls) {
         StringBuilder sb = new StringBuilder();
-        Set<String> seenKeys = new LinkedHashSet<String>();
+        Set<String> seenKeys = new LinkedHashSet<>();
 
         for (LineEntry e : st.structure) {
             if (e == null) {
@@ -95,12 +97,13 @@ public class FlatConfYaml implements FlatService {
                     seenKeys.add(e.key);
                 }
                 appendKeyLine(sb, e, data, ls);
-                continue;
+            } else {
+                appendNonKeyLine(sb, e, ls);
             }
-            appendNonKeyLine(sb, e, ls);
         }
 
         appendExtraKeys(sb, data, seenKeys, ls);
+
         return sb.toString();
     }
 
@@ -124,13 +127,7 @@ public class FlatConfYaml implements FlatService {
     }
 
     private static void appendExtraKeys(StringBuilder sb, Map<String, FileDataItem> data, Set<String> seenKeys, String ls) {
-        List<String> extras = new ArrayList<String>();
-        for (String k : data.keySet()) {
-            if (k == null || META_KEY.equals(k) || seenKeys.contains(k)) {
-                continue;
-            }
-            extras.add(k);
-        }
+        List<String> extras = collectExtraKeys(data, seenKeys);
         if (extras.isEmpty()) {
             return;
         }
@@ -144,6 +141,17 @@ public class FlatConfYaml implements FlatService {
             }
             appendItemAsYaml(sb, k, item, ls);
         }
+    }
+
+    private static List<String> collectExtraKeys(Map<String, FileDataItem> data, Set<String> seenKeys) {
+        List<String> extras = new ArrayList<>();
+        for (String k : data.keySet()) {
+            if (k == null || META_KEY.equals(k) || seenKeys.contains(k)) {
+                continue;
+            }
+            extras.add(k);
+        }
+        return extras;
     }
 
     private static void appendItemAsYaml(StringBuilder sb, String key, FileDataItem item, String ls) {
@@ -173,7 +181,7 @@ public class FlatConfYaml implements FlatService {
     }
 
     private static String dumpFallback(Map<String, FileDataItem> data, String ls) {
-        List<String> keys = new ArrayList<String>();
+        List<String> keys = new ArrayList<>();
         for (String k : data.keySet()) {
             if (k != null && !META_KEY.equals(k)) {
                 keys.add(k);
@@ -192,7 +200,7 @@ public class FlatConfYaml implements FlatService {
         return sb.toString();
     }
 
-    private static boolean handleEmpty(String line, ParseState ps, State st) {
+    private static boolean handleEmptyLine(String line, ParseState ps, State st) {
         if (!line.trim().isEmpty()) {
             return false;
         }
@@ -201,7 +209,7 @@ public class FlatConfYaml implements FlatService {
         return true;
     }
 
-    private static boolean handleComment(String line, ParseState ps, State st) {
+    private static boolean handleCommentLine(String line, ParseState ps, State st) {
         String trimmed = line.trim();
         if (!trimmed.startsWith("#")) {
             return false;
@@ -211,7 +219,7 @@ public class FlatConfYaml implements FlatService {
         return true;
     }
 
-    private static boolean handleContinuation(String line, ParseState ps) {
+    private static boolean handleContinuationLine(String line, ParseState ps) {
         if (ps.currentKey == null) {
             return false;
         }
@@ -225,10 +233,11 @@ public class FlatConfYaml implements FlatService {
         return true;
     }
 
-    private static boolean handleTopLevelKey(String line, ParseState ps, Map<String, FileDataItem> result, State st) {
+    private static boolean handleTopLevelKeyLine(String line, ParseState ps, Map<String, FileDataItem> result, State st) {
         if (!isTopLevelKeyLine(line)) {
             return false;
         }
+
         commitCurrent(result, ps);
 
         TopKeyParts parts = splitTopLevelKey(line);
@@ -278,14 +287,6 @@ public class FlatConfYaml implements FlatService {
         ps.pendingMeta.setLength(0);
     }
 
-    private static boolean startsWithIndent(String line) {
-        if (line.isEmpty()) {
-            return false;
-        }
-        char c0 = line.charAt(0);
-        return c0 == ' ' || c0 == '\t';
-    }
-
     private static boolean isTopLevelKeyLine(String line) {
         if (line == null || line.isEmpty()) {
             return false;
@@ -299,6 +300,14 @@ public class FlatConfYaml implements FlatService {
         }
         int idx = line.indexOf(':');
         return idx > 0;
+    }
+
+    private static boolean startsWithIndent(String line) {
+        if (line.isEmpty()) {
+            return false;
+        }
+        char c0 = line.charAt(0);
+        return c0 == ' ' || c0 == '\t';
     }
 
     private static TopKeyParts splitTopLevelKey(String line) {
@@ -319,15 +328,16 @@ public class FlatConfYaml implements FlatService {
         String nonCommentPart = commentIdx >= 0 ? afterColon.substring(0, commentIdx) : afterColon;
         String commentPart = commentIdx >= 0 ? afterColon.substring(commentIdx) : "";
 
-        Range trimmed = trimRange(nonCommentPart);
+        Range r = trimRange(nonCommentPart);
+
         String valueText = "";
         String prefixSpaces = "";
         String suffixSpaces = "";
 
-        if (trimmed != null) {
-            prefixSpaces = nonCommentPart.substring(0, trimmed.start);
-            suffixSpaces = nonCommentPart.substring(trimmed.end);
-            valueText = nonCommentPart.substring(trimmed.start, trimmed.end).trim();
+        if (r != null) {
+            prefixSpaces = nonCommentPart.substring(0, r.start);
+            suffixSpaces = nonCommentPart.substring(r.end);
+            valueText = nonCommentPart.substring(r.start, r.end).trim();
         }
 
         String prefix = line.substring(0, colonIdx + 1) + prefixSpaces;
@@ -379,7 +389,7 @@ public class FlatConfYaml implements FlatService {
         return v == null ? "" : String.valueOf(v);
     }
 
-    private static String trimTrailingIfNeeded(String out, String ls) {
+    private static String trimTrailingLineSep(String out, String ls) {
         if (out == null || out.isEmpty()) {
             return out;
         }
@@ -414,34 +424,12 @@ public class FlatConfYaml implements FlatService {
         return DEFAULT_LS;
     }
 
-    private static String lineSepToken(String ls) {
-        if ("\r\n".equals(ls)) {
-            return "CRLF";
-        }
-        if ("\r".equals(ls)) {
-            return "CR";
-        }
-        return "LF";
-    }
-
-    private static String tokenToLineSep(String token) {
-        if ("CRLF".equals(token)) {
-            return "\r\n";
-        }
-        if ("CR".equals(token)) {
-            return "\r";
-        }
-        if ("LF".equals(token)) {
-            return "\n";
-        }
-        return DEFAULT_LS;
-    }
-
     private static String encodeMeta(State st) {
         StringBuilder sb = new StringBuilder();
         sb.append(META_VERSION).append("\n");
         sb.append(st.originalEndsWithNewline ? "1" : "0").append("\n");
         sb.append(lineSepToken(st.lineSeparator)).append("\n");
+
         for (LineEntry e : st.structure) {
             if (e == null) {
                 continue;
@@ -453,6 +441,7 @@ public class FlatConfYaml implements FlatService {
             }
             sb.append("\n");
         }
+
         return Base64.getEncoder().encodeToString(sb.toString().getBytes(StandardCharsets.UTF_8));
     }
 
@@ -519,16 +508,12 @@ public class FlatConfYaml implements FlatService {
         if (bar < 0) {
             return null;
         }
-
         EntryType type = EntryType.fromCode(line.charAt(0));
         if (type == null) {
             return null;
         }
 
-        String payloadB64 = line.substring(bar + 1);
-        String payload = payloadB64.isEmpty()
-                ? ""
-                : new String(Base64.getDecoder().decode(payloadB64), StandardCharsets.UTF_8);
+        String payload = decodePayload(line.substring(bar + 1));
 
         if (type == EntryType.EMPTY) {
             return LineEntry.empty();
@@ -546,7 +531,38 @@ public class FlatConfYaml implements FlatService {
             String s = parts.length > 2 ? parts[2] : "";
             return LineEntry.forKey(k, p, s);
         }
+
         return null;
+    }
+
+    private static String decodePayload(String payloadB64) {
+        if (payloadB64 == null || payloadB64.isEmpty()) {
+            return "";
+        }
+        return new String(Base64.getDecoder().decode(payloadB64), StandardCharsets.UTF_8);
+    }
+
+    private static String lineSepToken(String ls) {
+        if ("\r\n".equals(ls)) {
+            return "CRLF";
+        }
+        if ("\r".equals(ls)) {
+            return "CR";
+        }
+        return "LF";
+    }
+
+    private static String tokenToLineSep(String token) {
+        if ("CRLF".equals(token)) {
+            return "\r\n";
+        }
+        if ("CR".equals(token)) {
+            return "\r";
+        }
+        if ("LF".equals(token)) {
+            return "\n";
+        }
+        return DEFAULT_LS;
     }
 
     private static String nvl(String s) {
@@ -568,7 +584,7 @@ public class FlatConfYaml implements FlatService {
             String ls = detectLineSeparator(data);
             boolean ends = data.endsWith("\n") || data.endsWith("\r");
             String[] raw = data.split("\\R", -1);
-            List<String> lines = new ArrayList<String>();
+            List<String> lines = new ArrayList<>();
             Collections.addAll(lines, raw);
             if (ends && !lines.isEmpty() && lines.get(lines.size() - 1).isEmpty()) {
                 lines.remove(lines.size() - 1);
@@ -612,7 +628,7 @@ public class FlatConfYaml implements FlatService {
     private static final class State {
         final boolean originalEndsWithNewline;
         final String lineSeparator;
-        final List<LineEntry> structure = new ArrayList<LineEntry>();
+        final List<LineEntry> structure = new ArrayList<>();
 
         private State(boolean originalEndsWithNewline, String lineSeparator) {
             this.originalEndsWithNewline = originalEndsWithNewline;
@@ -718,7 +734,7 @@ public class FlatConfYaml implements FlatService {
     private static final class MetaHidingMap extends LinkedHashMap<String, FileDataItem> {
 
         void putInternal(FileDataItem value) {
-            super.put(FlatConfYaml.META_KEY, value);
+            super.put(META_KEY, value);
         }
 
         @Override
@@ -727,7 +743,7 @@ public class FlatConfYaml implements FlatService {
             if (!base.contains(META_KEY)) {
                 return base;
             }
-            Set<String> out = new LinkedHashSet<String>();
+            Set<String> out = new LinkedHashSet<>();
             for (String k : base) {
                 if (!META_KEY.equals(k)) {
                     out.add(k);
