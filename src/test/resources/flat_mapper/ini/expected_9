@@ -23,7 +23,7 @@ tslds-efs002100.ufsflcore.delta.sbrf.ru
 #VM
 tslds-efs000346.ufsflcore.delta.sbrf.ru
 tslds-efs000347.ufsflcore.delta.sbrf.ru
-value for nginx_node_mm[3] item
+value_for_nginx_node_mm[3]_item
 
 
 [hosts:children]

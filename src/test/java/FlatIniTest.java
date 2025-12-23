@@ -206,7 +206,7 @@ class FlatIniTest {
 
         var newItem = new FileDataItem();
         newItem.setKey("nginx_node_mm[3]");
-        newItem.setValue("value for nginx_node_mm[3] item");
+        newItem.setValue("value_for_nginx_node_mm[3]_item");
         map.put("nginx_node_mm[3]", newItem);
 
         var actual = new FlatIni().flatToString(map);
