@@ -78,4 +78,16 @@ class FlatConfYamlTest {
 
         assertEquals(expected, actual);
     }
+
+    @Test
+    void mappingCommentsFromFile() throws Exception {
+        var inputData = Files.readString(Paths.get(INPUT_7));
+        var map = new FlatConfYaml().flatToMap(inputData);
+
+        assertEquals(" Время старта JVM процесса master-ССД", map.get("master_start_jvm_timeout_seconds").getComment());
+        assertEquals(" Включение доставки zero secrets средствами Pipeline", map.get("zero_secrets_delivery_enabled").getComment());
+        assertEquals(" Параметры Approle аутентификации в SecMan", map.get("secrets.app_role_auth_method").getComment());
+        assertEquals(" Таймаут запросов в SecMan для получения zero secrets в секундах", map.get("secrets.timeout").getComment());
+        assertEquals(" Количество повторных попыток выполнения запросов в SecMan для получения zero secrets (0 повторные запросы выключены)", map.get("secrets.retries").getComment());
+    }
 }
