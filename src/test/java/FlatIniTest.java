@@ -26,6 +26,7 @@ class FlatIniTest {
     private static final String EXPECTED_6 = "src/test/resources/flat_mapper/ini/expected_6";
     private static final String EXPECTED_7 = "src/test/resources/flat_mapper/ini/expected_7";
     private static final String EXPECTED_8 = "src/test/resources/flat_mapper/ini/expected_8";
+    private static final String EXPECTED_9 = "src/test/resources/flat_mapper/ini/expected_9";
 
     @Test
     void flatToMap_flattensCorrectly() throws Exception {
@@ -195,6 +196,21 @@ class FlatIniTest {
 
         var actual = new FlatIni().flatToString(map);
         var expected = Files.readString(Paths.get(EXPECTED_8));
+        assertEquals(expected, actual);
+    }
+
+    @Test
+    void addingNewItem() throws Exception {
+        var inputData = Files.readString(Paths.get(INPUT_4));
+        var map = new FlatIni().flatToMap(inputData);
+
+        var newItem = new FileDataItem();
+        newItem.setKey("nginx_node_mm[3]");
+        newItem.setValue("value for nginx_node_mm[3] item");
+        map.put("nginx_node_mm[3]", newItem);
+
+        var actual = new FlatIni().flatToString(map);
+        var expected = Files.readString(Paths.get(EXPECTED_9));
         assertEquals(expected, actual);
     }
 }
