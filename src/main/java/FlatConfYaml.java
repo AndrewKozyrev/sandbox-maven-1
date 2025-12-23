@@ -3,7 +3,6 @@ import org.apache.commons.lang3.NotImplementedException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -12,9 +11,9 @@ import java.util.Set;
 
 public class FlatConfYaml implements FlatService {
 
-    private static final String DEFAULT_LS = System.lineSeparator();
+    private static final String DEFAULT_LS = "\n";
     private static final String META_KEY = "\u0000__flat_conf_yml_meta__";
-    private static final String META_VERSION = "V1";
+    private static final String META_VERSION = "V2";
     private static final String FIELD_SEP = "\u0001";
 
     @Override
@@ -28,23 +27,57 @@ public class FlatConfYaml implements FlatService {
         State st = new State(input.endsWithNewline, input.lineSeparator);
         ParseState ps = new ParseState();
 
-        for (String line : input.lines) {
+        for (int i = 0; i < input.lines.size(); i++) {
+            String line = input.lines.get(i);
             if (line == null) {
                 continue;
             }
-            if (handleEmptyLine(line, st)) {
+
+            if (isEmptyLine(line)) {
+                commitCurrent(result, ps);
+                st.structure.add(LineEntry.empty());
+                ps.pendingCommentLines.clear();
                 continue;
             }
-            if (handleCommentLine(line, st)) {
+
+            if (isCommentLine(line)) {
+                commitCurrent(result, ps);
+                st.structure.add(LineEntry.comment(line));
+                ps.pendingCommentLines.add(extractCommentText(line));
                 continue;
             }
+
             if (handleContinuationLine(line, ps)) {
                 continue;
             }
-            if (handleTopLevelKeyLine(line, ps, result, st)) {
+
+            if (isTopLevelKeyLine(line)) {
+                commitCurrent(result, ps);
+
+                TopKeyParts parts = splitTopLevelKey(line);
+                if (parts == null) {
+                    st.structure.add(LineEntry.raw(line));
+                    ps.pendingCommentLines.clear();
+                    continue;
+                }
+
+                String leadingComment = joinPendingComments(ps.pendingCommentLines);
+                int originalCommentCount = ps.pendingCommentLines.size();
+                ps.pendingCommentLines.clear();
+
+                ps.currentKey = parts.key;
+                ps.currentPrefix = parts.prefix;
+                ps.currentSuffix = parts.suffix;
+                ps.currentValue = new StringBuilder(parts.value);
+                ps.currentLeadingComment = leadingComment;
+
+                st.structure.add(LineEntry.forKey(ps.currentKey, ps.currentPrefix, ps.currentSuffix, originalCommentCount));
                 continue;
             }
+
+            commitCurrent(result, ps);
             st.structure.add(LineEntry.raw(line));
+            ps.pendingCommentLines.clear();
         }
 
         commitCurrent(result, ps);
@@ -87,7 +120,8 @@ public class FlatConfYaml implements FlatService {
         StringBuilder sb = new StringBuilder();
         Set<String> seenKeys = new LinkedHashSet<>();
 
-        for (LineEntry e : st.structure) {
+        for (int i = 0; i < st.structure.size(); i++) {
+            LineEntry e = st.structure.get(i);
             if (e == null) {
                 continue;
             }
@@ -106,13 +140,19 @@ public class FlatConfYaml implements FlatService {
                 if (e.key != null) {
                     seenKeys.add(e.key);
                 }
+
                 FileDataItem item = data.get(e.key);
                 if (item == null) {
                     continue;
                 }
-                if (shouldInsertNewCommentBeforeKey(e, item)) {
-                    appendInsertedComment(sb, item.getComment(), ls);
+
+                if (e.originalCommentCount == 0) {
+                    String inserted = item.getComment();
+                    if (inserted != null && !inserted.isBlank()) {
+                        appendInsertedComment(sb, inserted, ls);
+                    }
                 }
+
                 String v = safeValue(item);
                 sb.append(nvl(e.prefix)).append(v).append(nvl(e.suffix)).append(ls);
             }
@@ -123,43 +163,13 @@ public class FlatConfYaml implements FlatService {
         return sb.toString();
     }
 
-    private static boolean shouldInsertNewCommentBeforeKey(LineEntry e, FileDataItem item) {
-        String c = item == null ? null : item.getComment();
-        if (c == null || c.isBlank()) {
-            return false;
-        }
-        return e.originalCommentCount == 0;
-    }
-
-    private static void appendInsertedComment(StringBuilder sb, String comment, String ls) {
-        if (comment == null || comment.isEmpty()) {
-            return;
-        }
-        String[] lines = comment.split("\\R", -1);
-        for (String line : lines) {
-            if (line == null) {
+    private static void appendExtraKeys(StringBuilder sb, Map<String, FileDataItem> data, Set<String> seenKeys, String ls) {
+        for (Map.Entry<String, FileDataItem> en : data.entrySet()) {
+            String k = en.getKey();
+            if (k == null || META_KEY.equals(k) || seenKeys.contains(k)) {
                 continue;
             }
-            if (line.isEmpty()) {
-                sb.append(ls);
-            } else if (line.startsWith("#")) {
-                sb.append(line).append(ls);
-            } else {
-                sb.append("#").append(line).append(ls);
-            }
-        }
-    }
-
-    private static void appendExtraKeys(StringBuilder sb, Map<String, FileDataItem> data, Set<String> seenKeys, String ls) {
-        List<String> extras = collectExtraKeys(data, seenKeys);
-        if (extras.isEmpty()) {
-            return;
-        }
-
-        Collections.sort(extras);
-
-        for (String k : extras) {
-            FileDataItem item = data.get(k);
+            FileDataItem item = en.getValue();
             if (item == null) {
                 continue;
             }
@@ -171,29 +181,14 @@ public class FlatConfYaml implements FlatService {
         }
     }
 
-    private static List<String> collectExtraKeys(Map<String, FileDataItem> data, Set<String> seenKeys) {
-        List<String> extras = new ArrayList<>();
-        for (String k : data.keySet()) {
-            if (k == null || META_KEY.equals(k) || seenKeys.contains(k)) {
+    private static String dumpFallback(Map<String, FileDataItem> data, String ls) {
+        StringBuilder sb = new StringBuilder();
+        for (Map.Entry<String, FileDataItem> en : data.entrySet()) {
+            String k = en.getKey();
+            if (k == null || META_KEY.equals(k)) {
                 continue;
             }
-            extras.add(k);
-        }
-        return extras;
-    }
-
-    private static String dumpFallback(Map<String, FileDataItem> data, String ls) {
-        List<String> keys = new ArrayList<>();
-        for (String k : data.keySet()) {
-            if (k != null && !META_KEY.equals(k)) {
-                keys.add(k);
-            }
-        }
-        Collections.sort(keys);
-
-        StringBuilder sb = new StringBuilder();
-        for (String k : keys) {
-            FileDataItem item = data.get(k);
+            FileDataItem item = en.getValue();
             if (item == null) {
                 continue;
             }
@@ -206,21 +201,49 @@ public class FlatConfYaml implements FlatService {
         return sb.toString();
     }
 
-    private static boolean handleEmptyLine(String line, State st) {
-        if (!line.trim().isEmpty()) {
-            return false;
+    private static void appendInsertedComment(StringBuilder sb, String comment, String ls) {
+        String[] lines = String.valueOf(comment).split("\\R", -1);
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            if (line == null) {
+                continue;
+            }
+            sb.append("#").append(line).append(ls);
         }
-        st.structure.add(LineEntry.empty());
-        return true;
     }
 
-    private static boolean handleCommentLine(String line, State st) {
-        String trimmed = line.trim();
-        if (!trimmed.startsWith("#")) {
-            return false;
+    private static boolean isEmptyLine(String line) {
+        return line.trim().isEmpty();
+    }
+
+    private static boolean isCommentLine(String line) {
+        String t = line.trim();
+        return !t.isEmpty() && t.charAt(0) == '#';
+    }
+
+    private static String extractCommentText(String line) {
+        int idx = line.indexOf('#');
+        if (idx < 0) {
+            return "";
         }
-        st.structure.add(LineEntry.comment(line));
-        return true;
+        return line.substring(idx + 1);
+    }
+
+    private static String joinPendingComments(List<String> pending) {
+        if (pending == null || pending.isEmpty()) {
+            return null;
+        }
+        if (pending.size() == 1) {
+            return pending.get(0);
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < pending.size(); i++) {
+            if (i > 0) {
+                sb.append('\n');
+            }
+            sb.append(nvl(pending.get(i)));
+        }
+        return sb.toString();
     }
 
     private static boolean handleContinuationLine(String line, ParseState ps) {
@@ -237,46 +260,6 @@ public class FlatConfYaml implements FlatService {
         return true;
     }
 
-    private static boolean handleTopLevelKeyLine(String line, ParseState ps, Map<String, FileDataItem> result, State st) {
-        if (!isTopLevelKeyLine(line)) {
-            return false;
-        }
-
-        commitCurrent(result, ps);
-
-        TopKeyParts parts = splitTopLevelKey(line);
-        if (parts == null) {
-            st.structure.add(LineEntry.raw(line));
-            return true;
-        }
-
-        int originalCommentCount = countDirectLeadingComments(st.structure);
-
-        ps.currentKey = parts.key;
-        ps.currentPrefix = parts.prefix;
-        ps.currentSuffix = parts.suffix;
-        ps.currentValue = new StringBuilder(parts.value);
-
-        st.structure.add(LineEntry.forKey(ps.currentKey, ps.currentPrefix, ps.currentSuffix, originalCommentCount));
-        return true;
-    }
-
-    private static int countDirectLeadingComments(List<LineEntry> structure) {
-        int count = 0;
-        for (int i = structure.size() - 1; i >= 0; i--) {
-            LineEntry e = structure.get(i);
-            if (e == null) {
-                break;
-            }
-            if (e.type == EntryType.COMMENT) {
-                count++;
-                continue;
-            }
-            break;
-        }
-        return count;
-    }
-
     private static void commitCurrent(Map<String, FileDataItem> result, ParseState ps) {
         if (ps.currentKey == null) {
             return;
@@ -286,12 +269,17 @@ public class FlatConfYaml implements FlatService {
         item.setKey(ps.currentKey);
         item.setValue(ps.currentValue == null ? "" : ps.currentValue.toString());
 
+        if (ps.currentLeadingComment != null && !ps.currentLeadingComment.isEmpty()) {
+            item.setComment(ps.currentLeadingComment);
+        }
+
         result.put(ps.currentKey, item);
 
         ps.currentKey = null;
         ps.currentPrefix = null;
         ps.currentSuffix = null;
         ps.currentValue = new StringBuilder();
+        ps.currentLeadingComment = null;
     }
 
     private static boolean isTopLevelKeyLine(String line) {
@@ -437,7 +425,8 @@ public class FlatConfYaml implements FlatService {
         sb.append(st.originalEndsWithNewline ? "1" : "0").append("\n");
         sb.append(lineSepToken(st.lineSeparator)).append("\n");
 
-        for (LineEntry e : st.structure) {
+        for (int i = 0; i < st.structure.size(); i++) {
+            LineEntry e = st.structure.get(i);
             if (e == null) {
                 continue;
             }
@@ -604,7 +593,9 @@ public class FlatConfYaml implements FlatService {
             boolean ends = data.endsWith("\n") || data.endsWith("\r");
             String[] raw = data.split("\\R", -1);
             List<String> lines = new ArrayList<>();
-            Collections.addAll(lines, raw);
+            for (int i = 0; i < raw.length; i++) {
+                lines.add(raw[i]);
+            }
             if (ends && !lines.isEmpty() && lines.get(lines.size() - 1).isEmpty()) {
                 lines.remove(lines.size() - 1);
             }
@@ -617,6 +608,8 @@ public class FlatConfYaml implements FlatService {
         StringBuilder currentValue = new StringBuilder();
         String currentPrefix;
         String currentSuffix;
+        String currentLeadingComment;
+        final List<String> pendingCommentLines = new ArrayList<>();
     }
 
     private static final class Range {
@@ -667,7 +660,9 @@ public class FlatConfYaml implements FlatService {
         }
 
         static EntryType fromCode(char c) {
-            for (EntryType t : values()) {
+            EntryType[] vals = values();
+            for (int i = 0; i < vals.length; i++) {
+                EntryType t = vals[i];
                 if (t.code == c) {
                     return t;
                 }
