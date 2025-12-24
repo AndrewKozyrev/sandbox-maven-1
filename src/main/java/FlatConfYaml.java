@@ -120,47 +120,171 @@ public class FlatConfYaml implements FlatService {
         StringBuilder sb = new StringBuilder();
         Set<String> seenKeys = new LinkedHashSet<>();
 
-        for (int i = 0; i < st.structure.size(); i++) {
+        int i = 0;
+        while (i < st.structure.size()) {
             LineEntry e = st.structure.get(i);
             if (e == null) {
+                i++;
                 continue;
             }
 
             if (e.type == EntryType.EMPTY) {
                 sb.append(ls);
+                i++;
                 continue;
             }
 
-            if (e.type == EntryType.COMMENT || e.type == EntryType.RAW) {
+            if (e.type == EntryType.RAW) {
                 sb.append(nvl(e.text)).append(ls);
+                i++;
                 continue;
             }
 
             if (e.type == EntryType.KEY) {
-                if (e.key != null) {
-                    seenKeys.add(e.key);
+                i = appendKeyWithoutLeadingComments(sb, data, e, seenKeys, ls, i);
+                continue;
+            }
+
+            if (e.type == EntryType.COMMENT) {
+                int j = i;
+                while (j < st.structure.size()) {
+                    LineEntry ce = st.structure.get(j);
+                    if (ce == null || ce.type != EntryType.COMMENT) {
+                        break;
+                    }
+                    j++;
                 }
 
-                FileDataItem item = data.get(e.key);
-                if (item == null) {
-                    continue;
-                }
-
-                if (e.originalCommentCount == 0) {
-                    String inserted = item.getComment();
-                    if (inserted != null && !inserted.isBlank()) {
-                        appendInsertedComment(sb, inserted, ls);
+                if (j < st.structure.size()) {
+                    LineEntry next = st.structure.get(j);
+                    if (next != null && next.type == EntryType.KEY) {
+                        appendKeyWithLeadingComments(sb, data, st.structure, i, j, next, seenKeys, ls);
+                        i = j + 1;
+                        continue;
                     }
                 }
 
-                String v = safeValue(item);
-                sb.append(nvl(e.prefix)).append(v).append(nvl(e.suffix)).append(ls);
+                for (int k = i; k < j; k++) {
+                    LineEntry ce = st.structure.get(k);
+                    if (ce != null) {
+                        sb.append(nvl(ce.text)).append(ls);
+                    }
+                }
+                i = j;
+                continue;
             }
+
+            i++;
         }
 
         appendExtraKeys(sb, data, seenKeys, ls);
 
         return sb.toString();
+    }
+
+    private static int appendKeyWithoutLeadingComments(StringBuilder sb,
+                                                       Map<String, FileDataItem> data,
+                                                       LineEntry e,
+                                                       Set<String> seenKeys,
+                                                       String ls,
+                                                       int idx) {
+        if (e.key != null) {
+            seenKeys.add(e.key);
+        }
+
+        FileDataItem item = data.get(e.key);
+        if (item == null) {
+            return idx + 1;
+        }
+
+        String inserted = item.getComment();
+        if (inserted != null && !inserted.isBlank()) {
+            appendInsertedComment(sb, inserted, ls);
+        }
+
+        sb.append(nvl(e.prefix)).append(safeValue(item)).append(nvl(e.suffix)).append(ls);
+
+        return idx + 1;
+    }
+
+    private static void appendKeyWithLeadingComments(StringBuilder sb,
+                                                     Map<String, FileDataItem> data,
+                                                     List<LineEntry> structure,
+                                                     int commentStart,
+                                                     int commentEnd,
+                                                     LineEntry keyEntry,
+                                                     Set<String> seenKeys,
+                                                     String ls) {
+        if (keyEntry.key != null) {
+            seenKeys.add(keyEntry.key);
+        }
+
+        FileDataItem item = data.get(keyEntry.key);
+        if (item == null) {
+            return;
+        }
+
+        List<LineEntry> commentLines = new ArrayList<>();
+        for (int i = commentStart; i < commentEnd; i++) {
+            LineEntry ce = structure.get(i);
+            if (ce != null && ce.type == EntryType.COMMENT) {
+                commentLines.add(ce);
+            }
+        }
+
+        String newComment = item.getComment();
+        String originalComment = buildCommentTextFromLines(commentLines);
+
+        if (newComment != null && !newComment.isBlank()) {
+            if (newComment.equals(originalComment)) {
+                for (int i = 0; i < commentLines.size(); i++) {
+                    sb.append(nvl(commentLines.get(i).text)).append(ls);
+                }
+            } else {
+                String indent = commentIndent(commentLines);
+                appendInsertedCommentWithIndent(sb, newComment, indent, ls);
+            }
+        }
+
+        sb.append(nvl(keyEntry.prefix)).append(safeValue(item)).append(nvl(keyEntry.suffix)).append(ls);
+    }
+
+    private static String buildCommentTextFromLines(List<LineEntry> lines) {
+        if (lines == null || lines.isEmpty()) {
+            return null;
+        }
+        if (lines.size() == 1) {
+            return extractCommentText(nvl(lines.get(0).text));
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < lines.size(); i++) {
+            if (i > 0) {
+                sb.append('\n');
+            }
+            sb.append(extractCommentText(nvl(lines.get(i).text)));
+        }
+        return sb.toString();
+    }
+
+    private static String commentIndent(List<LineEntry> lines) {
+        if (lines == null || lines.isEmpty()) {
+            return "";
+        }
+        String t = lines.get(0) == null ? "" : nvl(lines.get(0).text);
+        int idx = t.indexOf('#');
+        return idx >= 0 ? t.substring(0, idx) : "";
+    }
+
+    private static void appendInsertedCommentWithIndent(StringBuilder sb, String comment, String indent, String ls) {
+        String[] lines = String.valueOf(comment).split("\\R", -1);
+        String pref = indent == null ? "" : indent;
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            if (line == null) {
+                continue;
+            }
+            sb.append(pref).append("#").append(line).append(ls);
+        }
     }
 
     private static void appendExtraKeys(StringBuilder sb, Map<String, FileDataItem> data, Set<String> seenKeys, String ls) {
