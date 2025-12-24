@@ -97,7 +97,7 @@ class FlatConfYamlTest {
         var inputData = Files.readString(Paths.get(INPUT_7));
         var map = new FlatConfYaml().flatToMap(inputData);
 
-        map.get("master_start_jvm_timeout_seconds").setComment("# Время старта JVM процесса master-СС");
+        map.get("master_start_jvm_timeout_seconds").setComment("Время старта JVM процесса master-СС");
 
         var actual = new FlatConfYaml().flatToString(map);
         var expected = Files.readString(Paths.get(EXPECTED_8));

@@ -3,7 +3,7 @@
 application_startup_command: "systemctl is-enabled -q {{ service_name }}.service || sudo /usr/bin/systemctl enable {{ service_name }}.service; sudo /usr/bin/systemctl start {{ service_name }}.service && systemctl -q is-active {{ service_name }}.service && exit 0 || grep -A 2 'SEVERE' {{ logs_path[0] }}/session_registry_master.start.log && exit 1"
 application_stop_command: "sudo /usr/bin/systemctl stop {{ service_name }}.service"
 
-# Время старта JVM процесса master-СС
+#Время старта JVM процесса master-СС
 master_start_jvm_timeout_seconds: 85
 
 
