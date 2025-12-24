@@ -3,6 +3,7 @@ import org.apache.commons.lang3.NotImplementedException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -27,66 +28,12 @@ public class FlatConfYaml implements FlatService {
         State st = new State(input.endsWithNewline, input.lineSeparator);
         ParseState ps = new ParseState();
 
-        for (int i = 0; i < input.lines.size(); i++) {
-            String line = input.lines.get(i);
-            if (line == null) {
-                continue;
-            }
-
-            if (isEmptyLine(line)) {
-                commitCurrent(result, ps);
-                st.structure.add(LineEntry.empty());
-                ps.pendingCommentLines.clear();
-                continue;
-            }
-
-            if (isCommentLine(line)) {
-                commitCurrent(result, ps);
-                st.structure.add(LineEntry.comment(line));
-                ps.pendingCommentLines.add(extractCommentText(line));
-                continue;
-            }
-
-            if (handleContinuationLine(line, ps)) {
-                continue;
-            }
-
-            if (isTopLevelKeyLine(line)) {
-                commitCurrent(result, ps);
-
-                TopKeyParts parts = splitTopLevelKey(line);
-                if (parts == null) {
-                    st.structure.add(LineEntry.raw(line));
-                    ps.pendingCommentLines.clear();
-                    continue;
-                }
-
-                String leadingComment = joinPendingComments(ps.pendingCommentLines);
-                int originalCommentCount = ps.pendingCommentLines.size();
-                ps.pendingCommentLines.clear();
-
-                ps.currentKey = parts.key;
-                ps.currentPrefix = parts.prefix;
-                ps.currentSuffix = parts.suffix;
-                ps.currentValue = new StringBuilder(parts.value);
-                ps.currentLeadingComment = leadingComment;
-
-                st.structure.add(LineEntry.forKey(ps.currentKey, ps.currentPrefix, ps.currentSuffix, originalCommentCount));
-                continue;
-            }
-
-            commitCurrent(result, ps);
-            st.structure.add(LineEntry.raw(line));
-            ps.pendingCommentLines.clear();
+        for (String line : input.lines) {
+            processInputLine(line, result, st, ps);
         }
 
         commitCurrent(result, ps);
-
-        FileDataItem metaItem = new FileDataItem();
-        metaItem.setKey(META_KEY);
-        metaItem.setValue(encodeMeta(st));
-        result.putInternal(metaItem);
-
+        result.putInternal(buildMetaItem(st));
         return result;
     }
 
@@ -97,15 +44,15 @@ public class FlatConfYaml implements FlatService {
         }
 
         State st = readMetaState(data);
+        String out;
+
         if (st == null || st.structure.isEmpty()) {
-            return dumpFallback(data, DEFAULT_LS);
-        }
-
-        String ls = st.lineSeparator;
-        String out = dumpWithStructure(data, st, ls);
-
-        if (!st.originalEndsWithNewline) {
-            out = trimTrailingLineSep(out, ls);
+            out = dumpFallback(data);
+        } else {
+            out = dumpWithStructure(data, st);
+            if (!st.originalEndsWithNewline) {
+                out = trimTrailingLineSep(out, st.lineSeparator);
+            }
         }
 
         return out;
@@ -116,223 +63,286 @@ public class FlatConfYaml implements FlatService {
         throw new NotImplementedException("Validation of .conf.yml files is not implemented yet.");
     }
 
-    private static String dumpWithStructure(Map<String, FileDataItem> data, State st, String ls) {
-        StringBuilder sb = new StringBuilder();
-        Set<String> seenKeys = new LinkedHashSet<>();
-
-        int i = 0;
-        while (i < st.structure.size()) {
-            LineEntry e = st.structure.get(i);
-            if (e == null) {
-                i++;
-                continue;
-            }
-
-            if (e.type == EntryType.EMPTY) {
-                sb.append(ls);
-                i++;
-                continue;
-            }
-
-            if (e.type == EntryType.RAW) {
-                sb.append(nvl(e.text)).append(ls);
-                i++;
-                continue;
-            }
-
-            if (e.type == EntryType.KEY) {
-                i = appendKeyWithoutLeadingComments(sb, data, e, seenKeys, ls, i);
-                continue;
-            }
-
-            if (e.type == EntryType.COMMENT) {
-                int j = i;
-                while (j < st.structure.size()) {
-                    LineEntry ce = st.structure.get(j);
-                    if (ce == null || ce.type != EntryType.COMMENT) {
-                        break;
-                    }
-                    j++;
-                }
-
-                if (j < st.structure.size()) {
-                    LineEntry next = st.structure.get(j);
-                    if (next != null && next.type == EntryType.KEY) {
-                        appendKeyWithLeadingComments(sb, data, st.structure, i, j, next, seenKeys, ls);
-                        i = j + 1;
-                        continue;
-                    }
-                }
-
-                for (int k = i; k < j; k++) {
-                    LineEntry ce = st.structure.get(k);
-                    if (ce != null) {
-                        sb.append(nvl(ce.text)).append(ls);
-                    }
-                }
-                i = j;
-                continue;
-            }
-
-            i++;
-        }
-
-        appendExtraKeys(sb, data, seenKeys, ls);
-
-        return sb.toString();
+    private static FileDataItem buildMetaItem(State st) {
+        FileDataItem metaItem = new FileDataItem();
+        metaItem.setKey(META_KEY);
+        metaItem.setComment(encodeMeta(st));
+        return metaItem;
     }
 
-    private static int appendKeyWithoutLeadingComments(StringBuilder sb,
-                                                       Map<String, FileDataItem> data,
-                                                       LineEntry e,
-                                                       Set<String> seenKeys,
-                                                       String ls,
-                                                       int idx) {
-        if (e.key != null) {
-            seenKeys.add(e.key);
+    private static void processInputLine(String line, Map<String, FileDataItem> result, State st, ParseState ps) {
+        if (line == null) {
+            return;
         }
 
-        FileDataItem item = data.get(e.key);
-        if (item == null) {
+        LineKind kind = classifyLine(line, ps);
+        switch (kind) {
+            case EMPTY:
+                commitCurrent(result, ps);
+                st.structure.add(LineEntry.empty());
+                ps.clearPendingComments();
+                break;
+            case COMMENT:
+                commitCurrent(result, ps);
+                st.structure.add(LineEntry.comment(line));
+                ps.pendingCommentLines.add(extractCommentText(line));
+                break;
+            case CONTINUATION:
+                ps.currentValue.append('\n').append(line);
+                break;
+            case KEY:
+                handleKeyLine(line, result, st, ps);
+                break;
+            case RAW:
+            default:
+                commitCurrent(result, ps);
+                st.structure.add(LineEntry.raw(line));
+                ps.clearPendingComments();
+                break;
+        }
+    }
+
+    private static LineKind classifyLine(String line, ParseState ps) {
+        if (isEmptyLine(line)) {
+            return LineKind.EMPTY;
+        }
+        if (isCommentLine(line)) {
+            return LineKind.COMMENT;
+        }
+        if (isContinuationLine(line, ps)) {
+            return LineKind.CONTINUATION;
+        }
+        if (isTopLevelKeyLine(line)) {
+            return LineKind.KEY;
+        }
+        return LineKind.RAW;
+    }
+
+    private static boolean isContinuationLine(String line, ParseState ps) {
+        if (ps.currentKey == null) {
+            return false;
+        }
+        String trimmed = line.trim();
+        boolean indented = startsWithIndent(line);
+        boolean listItem = trimmed.startsWith("- ");
+        return indented || listItem;
+    }
+
+    private static void handleKeyLine(String line, Map<String, FileDataItem> result, State st, ParseState ps) {
+        commitCurrent(result, ps);
+
+        TopKeyParts parts = splitTopLevelKey(line);
+        if (parts == null) {
+            st.structure.add(LineEntry.raw(line));
+            ps.clearPendingComments();
+            return;
+        }
+
+        String leadingComment = joinPendingComments(ps.pendingCommentLines);
+        int originalCommentCount = ps.pendingCommentLines.size();
+        ps.clearPendingComments();
+
+        ps.currentKey = parts.key;
+        ps.currentPrefix = parts.prefix;
+        ps.currentSuffix = parts.suffix;
+        ps.currentValue = new StringBuilder(parts.value);
+        ps.currentLeadingComment = leadingComment;
+
+        st.structure.add(LineEntry.forKey(ps.currentKey, ps.currentPrefix, ps.currentSuffix, originalCommentCount));
+    }
+
+    private static void commitCurrent(Map<String, FileDataItem> result, ParseState ps) {
+        if (ps.currentKey == null) {
+            return;
+        }
+
+        FileDataItem item = new FileDataItem();
+        item.setKey(ps.currentKey);
+        item.setValue(ps.currentValue == null ? "" : ps.currentValue.toString());
+
+        if (ps.currentLeadingComment != null && !ps.currentLeadingComment.isEmpty()) {
+            item.setComment(ps.currentLeadingComment);
+        }
+
+        result.put(ps.currentKey, item);
+        ps.resetCurrent();
+    }
+
+    private static String dumpWithStructure(Map<String, FileDataItem> data, State st) {
+        DumpContext ctx = new DumpContext(data, st.lineSeparator);
+        int idx = 0;
+        while (idx < st.structure.size()) {
+            idx = processStructureEntry(ctx, st.structure, idx);
+        }
+        appendKeysNotInStructure(ctx);
+        return ctx.sb.toString();
+    }
+
+    private static int processStructureEntry(DumpContext ctx, List<LineEntry> structure, int idx) {
+        LineEntry e = structure.get(idx);
+        if (e == null) {
             return idx + 1;
         }
 
-        String inserted = item.getComment();
-        if (inserted != null && !inserted.isBlank()) {
-            appendInsertedComment(sb, inserted, ls);
+        EntryType type = e.type;
+        if (type == EntryType.EMPTY) {
+            ctx.sb.append(ctx.ls);
+            return idx + 1;
         }
-
-        sb.append(nvl(e.prefix)).append(safeValue(item)).append(nvl(e.suffix)).append(ls);
-
+        if (type == EntryType.RAW) {
+            ctx.sb.append(nvl(e.text)).append(ctx.ls);
+            return idx + 1;
+        }
+        if (type == EntryType.KEY) {
+            appendKeyWithoutLeadingComments(ctx, e);
+            return idx + 1;
+        }
+        if (type == EntryType.COMMENT) {
+            int end = commentBlockEnd(structure, idx);
+            if (end < structure.size()) {
+                LineEntry next = structure.get(end);
+                if (next != null && next.type == EntryType.KEY) {
+                    appendKeyWithLeadingComments(ctx, structure, idx, end, next);
+                    return end + 1;
+                }
+            }
+            appendCommentRangeAsIs(ctx, structure, idx, end);
+            return end;
+        }
         return idx + 1;
     }
 
-    private static void appendKeyWithLeadingComments(StringBuilder sb,
-                                                     Map<String, FileDataItem> data,
-                                                     List<LineEntry> structure,
-                                                     int commentStart,
-                                                     int commentEnd,
-                                                     LineEntry keyEntry,
-                                                     Set<String> seenKeys,
-                                                     String ls) {
-        if (keyEntry.key != null) {
-            seenKeys.add(keyEntry.key);
+    private static int commentBlockEnd(List<LineEntry> structure, int start) {
+        int idx = start;
+        while (idx < structure.size()) {
+            LineEntry e = structure.get(idx);
+            if (e == null || e.type != EntryType.COMMENT) {
+                return idx;
+            }
+            idx++;
+        }
+        return idx;
+    }
+
+    private static void appendCommentRangeAsIs(DumpContext ctx, List<LineEntry> structure, int start, int end) {
+        for (LineEntry ce : structure.subList(start, end)) {
+            if (ce != null) {
+                ctx.sb.append(nvl(ce.text)).append(ctx.ls);
+            }
+        }
+    }
+
+    private static void appendKeyWithoutLeadingComments(DumpContext ctx, LineEntry e) {
+        if (e.key != null) {
+            ctx.seenKeys.add(e.key);
         }
 
-        FileDataItem item = data.get(keyEntry.key);
+        FileDataItem item = ctx.data.get(e.key);
         if (item == null) {
             return;
         }
 
-        List<LineEntry> commentLines = new ArrayList<>();
-        for (int i = commentStart; i < commentEnd; i++) {
-            LineEntry ce = structure.get(i);
-            if (ce != null && ce.type == EntryType.COMMENT) {
-                commentLines.add(ce);
-            }
+        appendInsertedComment(ctx, item.getComment(), "");
+        ctx.sb.append(nvl(e.prefix)).append(safeValue(item)).append(nvl(e.suffix)).append(ctx.ls);
+    }
+
+    private static void appendKeyWithLeadingComments(
+            DumpContext ctx,
+            List<LineEntry> structure,
+            int commentStart,
+            int commentEnd,
+            LineEntry keyEntry
+    ) {
+        if (keyEntry.key != null) {
+            ctx.seenKeys.add(keyEntry.key);
+        }
+
+        FileDataItem item = ctx.data.get(keyEntry.key);
+        if (item == null) {
+            return;
         }
 
         String newComment = item.getComment();
-        String originalComment = buildCommentTextFromLines(commentLines);
+        String originalComment = buildOriginalCommentText(structure, commentStart, commentEnd);
 
         if (newComment != null && !newComment.isBlank()) {
             if (newComment.equals(originalComment)) {
-                for (int i = 0; i < commentLines.size(); i++) {
-                    sb.append(nvl(commentLines.get(i).text)).append(ls);
-                }
+                appendCommentRangeAsIs(ctx, structure, commentStart, commentEnd);
             } else {
-                String indent = commentIndent(commentLines);
-                appendInsertedCommentWithIndent(sb, newComment, indent, ls);
+                String indent = findCommentIndent(structure, commentStart, commentEnd);
+                appendInsertedComment(ctx, newComment, indent);
             }
         }
 
-        sb.append(nvl(keyEntry.prefix)).append(safeValue(item)).append(nvl(keyEntry.suffix)).append(ls);
+        ctx.sb.append(nvl(keyEntry.prefix)).append(safeValue(item)).append(nvl(keyEntry.suffix)).append(ctx.ls);
     }
 
-    private static String buildCommentTextFromLines(List<LineEntry> lines) {
-        if (lines == null || lines.isEmpty()) {
-            return null;
-        }
-        if (lines.size() == 1) {
-            return extractCommentText(nvl(lines.get(0).text));
-        }
+    private static String buildOriginalCommentText(List<LineEntry> structure, int start, int end) {
         StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < lines.size(); i++) {
-            if (i > 0) {
-                sb.append('\n');
+        boolean first = true;
+        for (LineEntry e : structure.subList(start, end)) {
+            if (e != null && e.type == EntryType.COMMENT) {
+                if (!first) {
+                    sb.append('\n');
+                }
+                sb.append(extractCommentText(nvl(e.text)));
+                first = false;
             }
-            sb.append(extractCommentText(nvl(lines.get(i).text)));
         }
-        return sb.toString();
+        return first ? null : sb.toString();
     }
 
-    private static String commentIndent(List<LineEntry> lines) {
-        if (lines == null || lines.isEmpty()) {
-            return "";
-        }
-        String t = lines.get(0) == null ? "" : nvl(lines.get(0).text);
-        int idx = t.indexOf('#');
-        return idx >= 0 ? t.substring(0, idx) : "";
-    }
-
-    private static void appendInsertedCommentWithIndent(StringBuilder sb, String comment, String indent, String ls) {
-        String[] lines = String.valueOf(comment).split("\\R", -1);
-        String pref = indent == null ? "" : indent;
-        for (int i = 0; i < lines.length; i++) {
-            String line = lines[i];
-            if (line == null) {
-                continue;
+    private static String findCommentIndent(List<LineEntry> structure, int start, int end) {
+        for (LineEntry e : structure.subList(start, end)) {
+            if (e != null && e.type == EntryType.COMMENT) {
+                String t = nvl(e.text);
+                int idx = t.indexOf('#');
+                return idx >= 0 ? t.substring(0, idx) : "";
             }
-            sb.append(pref).append("#").append(line).append(ls);
         }
+        return "";
     }
 
-    private static void appendExtraKeys(StringBuilder sb, Map<String, FileDataItem> data, Set<String> seenKeys, String ls) {
-        for (Map.Entry<String, FileDataItem> en : data.entrySet()) {
+    private static void appendKeysNotInStructure(DumpContext ctx) {
+        for (Map.Entry<String, FileDataItem> en : ctx.data.entrySet()) {
             String k = en.getKey();
-            if (k == null || META_KEY.equals(k) || seenKeys.contains(k)) {
+            if (k == null || META_KEY.equals(k) || ctx.seenKeys.contains(k)) {
                 continue;
             }
-            FileDataItem item = en.getValue();
-            if (item == null) {
-                continue;
-            }
-            String c = item.getComment();
-            if (c != null && !c.isBlank()) {
-                appendInsertedComment(sb, c, ls);
-            }
-            sb.append(k).append(": ").append(safeValue(item)).append(ls);
+            appendNewKey(ctx, k, en.getValue());
         }
     }
 
-    private static String dumpFallback(Map<String, FileDataItem> data, String ls) {
-        StringBuilder sb = new StringBuilder();
+    private static String dumpFallback(Map<String, FileDataItem> data) {
+        DumpContext ctx = new DumpContext(data, DEFAULT_LS);
         for (Map.Entry<String, FileDataItem> en : data.entrySet()) {
             String k = en.getKey();
             if (k == null || META_KEY.equals(k)) {
                 continue;
             }
-            FileDataItem item = en.getValue();
-            if (item == null) {
-                continue;
-            }
-            String c = item.getComment();
-            if (c != null && !c.isBlank()) {
-                appendInsertedComment(sb, c, ls);
-            }
-            sb.append(k).append(": ").append(safeValue(item)).append(ls);
+            appendNewKey(ctx, k, en.getValue());
         }
-        return sb.toString();
+        return ctx.sb.toString();
     }
 
-    private static void appendInsertedComment(StringBuilder sb, String comment, String ls) {
-        String[] lines = String.valueOf(comment).split("\\R", -1);
-        for (int i = 0; i < lines.length; i++) {
-            String line = lines[i];
-            if (line == null) {
-                continue;
+    private static void appendNewKey(DumpContext ctx, String key, FileDataItem item) {
+        if (item == null) {
+            return;
+        }
+        appendInsertedComment(ctx, item.getComment(), "");
+        ctx.sb.append(key).append(": ").append(safeValue(item)).append(ctx.ls);
+    }
+
+    private static void appendInsertedComment(DumpContext ctx, String comment, String indentBeforeHash) {
+        if (comment == null || comment.isBlank()) {
+            return;
+        }
+        String prefix = indentBeforeHash == null ? "" : indentBeforeHash;
+        String[] lines = comment.split("\\R", -1);
+        for (String line : lines) {
+            if (line != null) {
+                ctx.sb.append(prefix).append("#").append(line).append(ctx.ls);
             }
-            sb.append("#").append(line).append(ls);
         }
     }
 
@@ -357,53 +367,16 @@ public class FlatConfYaml implements FlatService {
         if (pending == null || pending.isEmpty()) {
             return null;
         }
-        if (pending.size() == 1) {
-            return pending.get(0);
-        }
         StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < pending.size(); i++) {
-            if (i > 0) {
+        boolean first = true;
+        for (String line : pending) {
+            if (!first) {
                 sb.append('\n');
             }
-            sb.append(nvl(pending.get(i)));
+            sb.append(nvl(line));
+            first = false;
         }
         return sb.toString();
-    }
-
-    private static boolean handleContinuationLine(String line, ParseState ps) {
-        if (ps.currentKey == null) {
-            return false;
-        }
-        String trimmed = line.trim();
-        boolean indented = startsWithIndent(line);
-        boolean listItem = trimmed.startsWith("- ");
-        if (!indented && !listItem) {
-            return false;
-        }
-        ps.currentValue.append('\n').append(line);
-        return true;
-    }
-
-    private static void commitCurrent(Map<String, FileDataItem> result, ParseState ps) {
-        if (ps.currentKey == null) {
-            return;
-        }
-
-        FileDataItem item = new FileDataItem();
-        item.setKey(ps.currentKey);
-        item.setValue(ps.currentValue == null ? "" : ps.currentValue.toString());
-
-        if (ps.currentLeadingComment != null && !ps.currentLeadingComment.isEmpty()) {
-            item.setComment(ps.currentLeadingComment);
-        }
-
-        result.put(ps.currentKey, item);
-
-        ps.currentKey = null;
-        ps.currentPrefix = null;
-        ps.currentSuffix = null;
-        ps.currentValue = new StringBuilder();
-        ps.currentLeadingComment = null;
     }
 
     private static boolean isTopLevelKeyLine(String line) {
@@ -441,7 +414,7 @@ public class FlatConfYaml implements FlatService {
             return null;
         }
 
-        String afterColon = line.substring(colonIdx + 1);
+        String afterColon = (colonIdx + 1 < line.length()) ? line.substring(colonIdx + 1) : "";
         int commentIdx = findInlineCommentIndex(afterColon);
 
         String nonCommentPart = commentIdx >= 0 ? afterColon.substring(0, commentIdx) : afterColon;
@@ -449,14 +422,18 @@ public class FlatConfYaml implements FlatService {
 
         Range r = trimRange(nonCommentPart);
 
-        String valueText = "";
-        String prefixSpaces = "";
-        String suffixSpaces = "";
+        String valueText;
+        String prefixSpaces;
+        String suffixSpaces;
 
-        if (r != null) {
+        if (r == null) {
+            valueText = "";
+            prefixSpaces = nonCommentPart;
+            suffixSpaces = "";
+        } else {
+            valueText = nonCommentPart.substring(r.start, r.end).trim();
             prefixSpaces = nonCommentPart.substring(0, r.start);
             suffixSpaces = nonCommentPart.substring(r.end);
-            valueText = nonCommentPart.substring(r.start, r.end).trim();
         }
 
         String prefix = line.substring(0, colonIdx + 1) + prefixSpaces;
@@ -469,22 +446,22 @@ public class FlatConfYaml implements FlatService {
         if (s == null || s.isEmpty()) {
             return -1;
         }
+
         boolean inSingle = false;
         boolean inDouble = false;
+
         for (int i = 0; i < s.length(); i++) {
             char ch = s.charAt(i);
+
             if (ch == '\'' && !inDouble) {
                 inSingle = !inSingle;
-                continue;
-            }
-            if (ch == '"' && !inSingle) {
+            } else if (ch == '"' && !inSingle) {
                 inDouble = !inDouble;
-                continue;
-            }
-            if (ch == '#' && !inSingle && !inDouble) {
+            } else if (ch == '#' && !inSingle && !inDouble) {
                 return i;
             }
         }
+
         return -1;
     }
 
@@ -521,45 +498,28 @@ public class FlatConfYaml implements FlatService {
             if (ch == '\n' || ch == '\r') {
                 end--;
             } else {
-                break;
+                return out;
             }
         }
         return out.substring(0, end);
     }
 
-    private static String detectLineSeparator(String data) {
-        int idx = data.indexOf("\r\n");
-        if (idx >= 0) {
-            return "\r\n";
-        }
-        idx = data.indexOf('\n');
-        if (idx >= 0) {
-            return "\n";
-        }
-        idx = data.indexOf('\r');
-        if (idx >= 0) {
-            return "\r";
-        }
-        return DEFAULT_LS;
-    }
-
     private static String encodeMeta(State st) {
         StringBuilder sb = new StringBuilder();
-        sb.append(META_VERSION).append("\n");
-        sb.append(st.originalEndsWithNewline ? "1" : "0").append("\n");
-        sb.append(lineSepToken(st.lineSeparator)).append("\n");
+        sb.append(META_VERSION).append('\n');
+        sb.append(st.originalEndsWithNewline ? "1" : "0").append('\n');
+        sb.append(lineSepToken(st.lineSeparator)).append('\n');
 
-        for (int i = 0; i < st.structure.size(); i++) {
-            LineEntry e = st.structure.get(i);
+        for (LineEntry e : st.structure) {
             if (e == null) {
                 continue;
             }
-            sb.append(e.type.code).append("|");
+            sb.append(e.type.code).append('|');
             String payload = encodePayload(e);
             if (payload != null) {
                 sb.append(Base64.getEncoder().encodeToString(payload.getBytes(StandardCharsets.UTF_8)));
             }
-            sb.append("\n");
+            sb.append('\n');
         }
 
         return Base64.getEncoder().encodeToString(sb.toString().getBytes(StandardCharsets.UTF_8));
@@ -580,14 +540,20 @@ public class FlatConfYaml implements FlatService {
         if (metaItem == null) {
             return null;
         }
-        Object raw = metaItem.getValue();
-        if (raw == null) {
-            return null;
+
+        String b64 = metaItem.getComment();
+        if (b64 == null || b64.isEmpty()) {
+            Object raw = metaItem.getValue();
+            if (raw == null) {
+                return null;
+            }
+            b64 = String.valueOf(raw);
         }
-        String b64 = String.valueOf(raw);
+
         if (b64.isEmpty()) {
             return null;
         }
+
         return decodeMeta(b64);
     }
 
@@ -595,39 +561,45 @@ public class FlatConfYaml implements FlatService {
         try {
             byte[] decoded = Base64.getDecoder().decode(b64);
             String text = new String(decoded, StandardCharsets.UTF_8);
-            String[] lines = text.split("\\R", -1);
-            if (lines.length < 3) {
-                return null;
-            }
-            if (!META_VERSION.equals(lines[0])) {
-                return null;
-            }
-
-            boolean endsWithNewline = "1".equals(lines[1]);
-            String ls = tokenToLineSep(lines[2]);
-            State st = new State(endsWithNewline, ls);
-
-            for (int i = 3; i < lines.length; i++) {
-                LineEntry e = decodeEntry(lines[i]);
-                if (e != null) {
-                    st.structure.add(e);
-                }
-            }
-
-            return st;
+            return parseMetaText(text);
         } catch (IllegalArgumentException ex) {
             return null;
         }
+    }
+
+    private static State parseMetaText(String text) {
+        String[] lines = text.split("\\R", -1);
+        if (lines.length < 3) {
+            return null;
+        }
+        if (!META_VERSION.equals(lines[0])) {
+            return null;
+        }
+
+        boolean endsWithNewline = "1".equals(lines[1]);
+        String ls = tokenToLineSep(lines[2]);
+        State st = new State(endsWithNewline, ls);
+
+        for (int i = 3; i < lines.length; i++) {
+            LineEntry e = decodeEntry(lines[i]);
+            if (e != null) {
+                st.structure.add(e);
+            }
+        }
+
+        return st;
     }
 
     private static LineEntry decodeEntry(String line) {
         if (line == null || line.isEmpty()) {
             return null;
         }
+
         int bar = line.indexOf('|');
         if (bar < 0) {
             return null;
         }
+
         EntryType type = EntryType.fromCode(line.charAt(0));
         if (type == null) {
             return null;
@@ -645,15 +617,19 @@ public class FlatConfYaml implements FlatService {
             return LineEntry.raw(payload);
         }
         if (type == EntryType.KEY) {
-            String[] parts = payload.split(FIELD_SEP, -1);
-            String k = parts.length > 0 ? parts[0] : "";
-            String p = parts.length > 1 ? parts[1] : "";
-            String s = parts.length > 2 ? parts[2] : "";
-            int c = parseIntSafe(parts.length > 3 ? parts[3] : "0");
-            return LineEntry.forKey(k, p, s, c);
+            return decodeKeyEntry(payload);
         }
 
         return null;
+    }
+
+    private static LineEntry decodeKeyEntry(String payload) {
+        String[] parts = payload.split(FIELD_SEP, -1);
+        String k = parts.length > 0 ? parts[0] : "";
+        String p = parts.length > 1 ? parts[1] : "";
+        String s = parts.length > 2 ? parts[2] : "";
+        int c = parseIntSafe(parts.length > 3 ? parts[3] : "0");
+        return LineEntry.forKey(k, p, s, c);
     }
 
     private static int parseIntSafe(String s) {
@@ -701,6 +677,48 @@ public class FlatConfYaml implements FlatService {
         return s == null ? "" : s;
     }
 
+    private enum LineKind {
+        EMPTY,
+        COMMENT,
+        CONTINUATION,
+        KEY,
+        RAW
+    }
+
+    private enum EntryType {
+        EMPTY('E'),
+        COMMENT('C'),
+        KEY('K'),
+        RAW('R');
+
+        final char code;
+
+        EntryType(char code) {
+            this.code = code;
+        }
+
+        static EntryType fromCode(char c) {
+            for (EntryType t : values()) {
+                if (t.code == c) {
+                    return t;
+                }
+            }
+            return null;
+        }
+    }
+
+    private static final class DumpContext {
+        final Map<String, FileDataItem> data;
+        final String ls;
+        final StringBuilder sb = new StringBuilder();
+        final Set<String> seenKeys = new LinkedHashSet<>();
+
+        private DumpContext(Map<String, FileDataItem> data, String ls) {
+            this.data = data;
+            this.ls = ls == null ? DEFAULT_LS : ls;
+        }
+    }
+
     private static final class ParseInput {
         final List<String> lines;
         final String lineSeparator;
@@ -715,15 +733,32 @@ public class FlatConfYaml implements FlatService {
         static ParseInput from(String data) {
             String ls = detectLineSeparator(data);
             boolean ends = data.endsWith("\n") || data.endsWith("\r");
+
             String[] raw = data.split("\\R", -1);
-            List<String> lines = new ArrayList<>();
-            for (int i = 0; i < raw.length; i++) {
-                lines.add(raw[i]);
-            }
+            List<String> lines = new ArrayList<>(raw.length);
+            Collections.addAll(lines, raw);
+
             if (ends && !lines.isEmpty() && lines.get(lines.size() - 1).isEmpty()) {
                 lines.remove(lines.size() - 1);
             }
+
             return new ParseInput(lines, ls, ends);
+        }
+
+        private static String detectLineSeparator(String data) {
+            int idx = data.indexOf("\r\n");
+            if (idx >= 0) {
+                return "\r\n";
+            }
+            idx = data.indexOf('\n');
+            if (idx >= 0) {
+                return "\n";
+            }
+            idx = data.indexOf('\r');
+            if (idx >= 0) {
+                return "\r";
+            }
+            return DEFAULT_LS;
         }
     }
 
@@ -734,6 +769,18 @@ public class FlatConfYaml implements FlatService {
         String currentSuffix;
         String currentLeadingComment;
         final List<String> pendingCommentLines = new ArrayList<>();
+
+        void clearPendingComments() {
+            pendingCommentLines.clear();
+        }
+
+        void resetCurrent() {
+            currentKey = null;
+            currentPrefix = null;
+            currentSuffix = null;
+            currentValue = new StringBuilder();
+            currentLeadingComment = null;
+        }
     }
 
     private static final class Range {
@@ -768,30 +815,6 @@ public class FlatConfYaml implements FlatService {
         private State(boolean originalEndsWithNewline, String lineSeparator) {
             this.originalEndsWithNewline = originalEndsWithNewline;
             this.lineSeparator = lineSeparator == null ? DEFAULT_LS : lineSeparator;
-        }
-    }
-
-    private enum EntryType {
-        EMPTY('E'),
-        COMMENT('C'),
-        KEY('K'),
-        RAW('R');
-
-        final char code;
-
-        EntryType(char code) {
-            this.code = code;
-        }
-
-        static EntryType fromCode(char c) {
-            EntryType[] vals = values();
-            for (int i = 0; i < vals.length; i++) {
-                EntryType t = vals[i];
-                if (t.code == c) {
-                    return t;
-                }
-            }
-            return null;
         }
     }
 
