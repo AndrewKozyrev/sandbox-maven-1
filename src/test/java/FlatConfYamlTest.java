@@ -14,6 +14,7 @@ class FlatConfYamlTest {
     private static final String INPUT_7 = "src/test/resources/flat_mapper/yaml/input_7.conf.yml";
     private static final String EXPECTED_6 = "src/test/resources/flat_mapper/yaml/expected_6";
     private static final String EXPECTED_7 = "src/test/resources/flat_mapper/yaml/expected_7";
+    private static final String EXPECTED_8 = "src/test/resources/flat_mapper/yaml/expected_8";
 
     @Test
     void flatToMap_flattensCorrectly() throws Exception {
@@ -89,5 +90,18 @@ class FlatConfYamlTest {
         assertEquals(" Параметры Approle аутентификации в SecMan", map.get("secrets.app_role_auth_method").getComment());
         assertEquals(" Таймаут запросов в SecMan для получения zero secrets в секундах", map.get("secrets.timeout").getComment());
         assertEquals(" Количество повторных попыток выполнения запросов в SecMan для получения zero secrets (0 повторные запросы выключены)", map.get("secrets.retries").getComment());
+    }
+
+    @Test
+    void editingComment() throws Exception {
+        var inputData = Files.readString(Paths.get(INPUT_7));
+        var map = new FlatConfYaml().flatToMap(inputData);
+
+        map.get("master_start_jvm_timeout_seconds").setComment("# Время старта JVM процесса master-СС");
+
+        var actual = new FlatConfYaml().flatToString(map);
+        var expected = Files.readString(Paths.get(EXPECTED_8));
+
+        assertEquals(expected, actual);
     }
 }
