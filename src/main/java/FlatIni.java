@@ -82,7 +82,6 @@ public class FlatIni implements FlatService {
         return dumpPlainFallback(data);
     }
 
-
     private static String dumpWithStructure(Map<String, FileDataItem> data, MetaState meta, String ls) {
         List<LineEntry> structure = meta.structure;
         Set<String> structureKeys = collectStructureKeys(structure);
@@ -107,8 +106,10 @@ public class FlatIni implements FlatService {
         Map<String, Integer> insertAtBySection = computeInsertAtBySection(structure);
 
         for (int i = 0; i <= structure.size(); i++) {
-            renderer.flushPendingStandalone();
-            appendExtrasAtIndex(sb, data, extrasBySection, insertAtBySection, i, ls);
+            if (hasExtrasAtIndex(extrasBySection, insertAtBySection, i)) {
+                renderer.flushPendingStandalone();
+                appendExtrasAtIndex(sb, data, extrasBySection, insertAtBySection, i, ls);
+            }
             if (i < structure.size()) {
                 LineEntry e = structure.get(i);
                 if (e != null) {
@@ -123,6 +124,25 @@ public class FlatIni implements FlatService {
         return sb.toString();
     }
 
+    private static boolean hasExtrasAtIndex(
+            Map<String, List<ExtraItem>> extrasBySection,
+            Map<String, Integer> insertAtBySection,
+            int index
+    ) {
+        if (extrasBySection == null || extrasBySection.isEmpty() || insertAtBySection == null || insertAtBySection.isEmpty()) {
+            return false;
+        }
+        for (Map.Entry<String, Integer> e : insertAtBySection.entrySet()) {
+            Integer v = e.getValue();
+            if (v != null && v == index) {
+                List<ExtraItem> extras = extrasBySection.get(e.getKey());
+                if (extras != null && !extras.isEmpty()) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
 
     private static void appendExtrasAtIndex(
             StringBuilder sb,
@@ -321,7 +341,6 @@ public class FlatIni implements FlatService {
         }
     }
 
-
     private static void appendData(
             StringBuilder sb,
             LineEntry e,
@@ -374,7 +393,6 @@ public class FlatIni implements FlatService {
         return false;
     }
 
-
     private static String stripCommentPrefix(String trimmed) {
         if (trimmed == null) {
             return "";
@@ -403,7 +421,6 @@ public class FlatIni implements FlatService {
     private static boolean isChildrenSection(String section) {
         return section != null && section.endsWith(":children");
     }
-
 
     private static final class StructureRenderer {
         private final StringBuilder sb;
@@ -567,12 +584,11 @@ public class FlatIni implements FlatService {
                     if (wrote) {
                         sb.append(ls);
                     }
-                } else if (p.type == LineType.COMMENT) {
-                    if (!p.meta) {
+                } else if (p.type == LineType.COMMENT && !p.meta) {
                         sb.append(nvl(p.raw)).append(ls);
                         wrote = true;
                     }
-                }
+
             }
         }
 
@@ -580,11 +596,10 @@ public class FlatIni implements FlatService {
             for (PendingLine p : pending) {
                 if (p.type == LineType.EMPTY) {
                     sb.append(ls);
-                } else if (p.type == LineType.COMMENT) {
-                    if (!p.meta) {
+                } else if (p.type == LineType.COMMENT && !p.meta) {
                         sb.append(nvl(p.raw)).append(ls);
                     }
-                }
+
             }
         }
 
@@ -592,25 +607,22 @@ public class FlatIni implements FlatService {
             boolean replaced = false;
             for (int i = 0; i < pending.size(); i++) {
                 PendingLine p = pending.get(i);
-                if (i >= startIdx && i <= endIdx) {
-                    if (p.type == LineType.COMMENT && (p.meta)) {
+                if (i >= startIdx && i <= endIdx && p.type == LineType.COMMENT && (p.meta)) {
                         if (!replaced) {
                             appendNewComment(sb, newComment, ls);
                             replaced = true;
                         }
                         continue;
                     }
-                }
+
 
                 if (p.type == LineType.EMPTY) {
                     sb.append(ls);
-                } else if (p.type == LineType.COMMENT) {
-                    if (!(true && p.meta && !replaced && i >= startIdx && i <= endIdx)) {
-                        if (!(true && p.meta && i >= startIdx && i <= endIdx)) {
+                } else if (p.type == LineType.COMMENT && !(p.meta && i >= startIdx && i <= endIdx)) {
                             sb.append(nvl(p.raw)).append(ls);
                         }
-                    }
-                }
+
+
             }
         }
 
@@ -1391,7 +1403,6 @@ public class FlatIni implements FlatService {
             pendingMetaComments.clear();
             return sb.toString();
         }
-
 
         private static ParsedSectionedLine parseSectionedLine(String rawLine, String section) {
             int start = firstNonWhitespace(rawLine);
