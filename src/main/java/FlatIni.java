@@ -9,6 +9,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.regex.Pattern;
 
@@ -76,45 +77,52 @@ public class FlatIni implements FlatService {
 
     private static String dumpFallback(Map<String, FileDataItem> data) {
         if (looksLikeSectionedKeys(data.keySet())) {
-            return dumpSectionedFallback(data, DEFAULT_LS);
+            return dumpSectionedFallback(data);
         }
-        return dumpPlainFallback(data, DEFAULT_LS);
+        return dumpPlainFallback(data);
     }
+
 
     private static String dumpWithStructure(Map<String, FileDataItem> data, MetaState meta, String ls) {
         List<LineEntry> structure = meta.structure;
-
         Set<String> structureKeys = collectStructureKeys(structure);
+
+        StringBuilder sb = new StringBuilder();
+        StructureRenderer renderer = new StructureRenderer(sb, data, meta.sectioned, ls, structure);
+
         if (!meta.sectioned) {
-            StringBuilder sb = new StringBuilder();
             for (int i = 0; i < structure.size(); i++) {
                 LineEntry e = structure.get(i);
                 if (e != null) {
-                    appendEntry(sb, e, data, false, ls, structure, i);
+                    renderer.appendStructure(e, i);
                 }
             }
+            renderer.flushPendingStandalone();
             appendExtraPlainItems(sb, data, structureKeys, ls);
+            renderer.finish();
             return sb.toString();
         }
 
         Map<String, List<ExtraItem>> extrasBySection = collectExtrasSectioned(data, structureKeys);
         Map<String, Integer> insertAtBySection = computeInsertAtBySection(structure);
 
-        StringBuilder sb = new StringBuilder();
         for (int i = 0; i <= structure.size(); i++) {
+            renderer.flushPendingStandalone();
             appendExtrasAtIndex(sb, data, extrasBySection, insertAtBySection, i, ls);
             if (i < structure.size()) {
                 LineEntry e = structure.get(i);
                 if (e != null) {
-                    appendEntry(sb, e, data, true, ls, structure, i);
+                    renderer.appendStructure(e, i);
                 }
             }
         }
 
+        renderer.flushPendingStandalone();
         appendRemainingNewSections(sb, data, extrasBySection, ls);
-
+        renderer.finish();
         return sb.toString();
     }
+
 
     private static void appendExtrasAtIndex(
             StringBuilder sb,
@@ -131,7 +139,7 @@ public class FlatIni implements FlatService {
         List<String> sections = new ArrayList<>();
         for (Map.Entry<String, Integer> e : insertAtBySection.entrySet()) {
             Integer v = e.getValue();
-            if (v != null && v.intValue() == index) {
+            if (v != null && v == index) {
                 sections.add(e.getKey());
             }
         }
@@ -313,23 +321,6 @@ public class FlatIni implements FlatService {
         }
     }
 
-    private static void appendEntry(
-            StringBuilder sb,
-            LineEntry e,
-            Map<String, FileDataItem> data,
-            boolean sectioned,
-            String ls,
-            List<LineEntry> structure,
-            int index
-    ) {
-        if (e.type == LineType.SECTION || e.type == LineType.COMMENT) {
-            sb.append(nvl(e.text)).append(ls);
-        } else if (e.type == LineType.EMPTY) {
-            sb.append(ls);
-        } else if (e.type == LineType.DATA) {
-            appendData(sb, e, data, sectioned, ls, structure, index);
-        }
-    }
 
     private static void appendData(
             StringBuilder sb,
@@ -381,6 +372,317 @@ public class FlatIni implements FlatService {
             }
         }
         return false;
+    }
+
+
+    private static String stripCommentPrefix(String trimmed) {
+        if (trimmed == null) {
+            return "";
+        }
+        String t = trimmed.trim();
+        if (t.startsWith("#") || t.startsWith(";")) {
+            return t.substring(1).trim();
+        }
+        return t.trim();
+    }
+
+    private static boolean isMetaComment(String content, String section) {
+        if (content == null) {
+            return false;
+        }
+        String c = content.toLowerCase(Locale.ROOT);
+        if (c.contains("ansible_")) {
+            return false;
+        }
+        if (isChildrenSection(section)) {
+            return true;
+        }
+        return !HOST_LINE_PATTERN.matcher(c).matches();
+    }
+
+    private static boolean isChildrenSection(String section) {
+        return section != null && section.endsWith(":children");
+    }
+
+
+    private static final class StructureRenderer {
+        private final StringBuilder sb;
+        private final Map<String, FileDataItem> data;
+        private final boolean sectioned;
+        private final String ls;
+        private final List<LineEntry> structure;
+
+        private final List<PendingLine> pending;
+        private String currentSection;
+
+        private StructureRenderer(StringBuilder sb, Map<String, FileDataItem> data, boolean sectioned, String ls, List<LineEntry> structure) {
+            this.sb = sb;
+            this.data = data;
+            this.sectioned = sectioned;
+            this.ls = ls;
+            this.structure = structure;
+            this.pending = new ArrayList<>();
+        }
+
+        void appendStructure(LineEntry e, int index) {
+            if (e == null) {
+                return;
+            }
+            if (e.type == LineType.SECTION) {
+                flushPendingStandalone();
+                sb.append(nvl(e.text)).append(ls);
+                currentSection = extractSectionNameFromHeader(e.text);
+                return;
+            }
+            if (e.type == LineType.EMPTY) {
+                pending.add(PendingLine.empty());
+                return;
+            }
+            if (e.type == LineType.COMMENT) {
+                bufferComment(e.text);
+                return;
+            }
+            if (e.type == LineType.DATA) {
+                flushPendingForData(e);
+                appendData(sb, e, data, sectioned, ls, structure, index);
+            }
+        }
+
+        void finish() {
+            flushPendingStandalone();
+        }
+
+        void flushPendingStandalone() {
+            if (pending.isEmpty()) {
+                return;
+            }
+            for (PendingLine p : pending) {
+                if (p.type == LineType.EMPTY) {
+                    sb.append(ls);
+                } else if (p.type == LineType.COMMENT) {
+                    sb.append(nvl(p.raw)).append(ls);
+                }
+            }
+            pending.clear();
+        }
+
+        private void bufferComment(String rawLine) {
+            if (rawLine == null) {
+                pending.add(PendingLine.comment("", false));
+                return;
+            }
+            String trimmed = rawLine.trim();
+            if (!isCommentLine(trimmed)) {
+                flushPendingStandalone();
+                sb.append(rawLine).append(ls);
+                return;
+            }
+
+            String content = stripCommentPrefix(trimmed);
+            boolean meta = !content.isEmpty() && isMetaComment(content, currentSection);
+            pending.add(PendingLine.comment(rawLine, meta));
+        }
+
+        private void flushPendingForData(LineEntry dataEntry) {
+            if (pending.isEmpty()) {
+                return;
+            }
+
+            boolean hasAnyComment = false;
+            boolean hasMeta = false;
+            int firstCommentIdx = -1;
+            int lastCommentIdx = -1;
+            int firstMetaIdx = -1;
+            int lastMetaIdx = -1;
+
+            for (int i = 0; i < pending.size(); i++) {
+                PendingLine p = pending.get(i);
+                if (p.type != LineType.COMMENT) {
+                    continue;
+                }
+                hasAnyComment = true;
+                if (firstCommentIdx < 0) {
+                    firstCommentIdx = i;
+                }
+                lastCommentIdx = i;
+                if (p.meta) {
+                    hasMeta = true;
+                    if (firstMetaIdx < 0) {
+                        firstMetaIdx = i;
+                    }
+                    lastMetaIdx = i;
+                }
+            }
+
+            if (!hasAnyComment) {
+                flushPendingStandalone();
+                return;
+            }
+
+            FileDataItem item = data.get(dataEntry.key);
+            if (item == null) {
+                flushPendingForMissingItem(hasMeta);
+                pending.clear();
+                return;
+            }
+
+            String newComment = item.getComment();
+
+            if (hasMeta) {
+                String originalMeta = joinPendingComments(true);
+                if (newComment == null || newComment.isBlank()) {
+                    writePendingExcludingMeta();
+                    pending.clear();
+                    return;
+                }
+                if (equalsNullable(originalMeta, newComment)) {
+                    flushPendingStandalone();
+                    return;
+                }
+
+                writePendingReplacingRange(firstMetaIdx, lastMetaIdx, newComment);
+                pending.clear();
+                return;
+            }
+
+            String originalAll = joinPendingComments(false);
+            if (newComment == null || newComment.isBlank() || equalsNullable(originalAll, newComment)) {
+                flushPendingStandalone();
+                return;
+            }
+
+            writePendingReplacingAllComments(firstCommentIdx, lastCommentIdx, newComment);
+            pending.clear();
+        }
+
+        private void flushPendingForMissingItem(boolean hasMeta) {
+            if (!hasMeta) {
+                flushPendingStandalone();
+                return;
+            }
+
+            boolean wrote = false;
+            for (PendingLine p : pending) {
+                if (p.type == LineType.EMPTY) {
+                    if (wrote) {
+                        sb.append(ls);
+                    }
+                } else if (p.type == LineType.COMMENT) {
+                    if (!p.meta) {
+                        sb.append(nvl(p.raw)).append(ls);
+                        wrote = true;
+                    }
+                }
+            }
+        }
+
+        private void writePendingExcludingMeta() {
+            for (PendingLine p : pending) {
+                if (p.type == LineType.EMPTY) {
+                    sb.append(ls);
+                } else if (p.type == LineType.COMMENT) {
+                    if (!p.meta) {
+                        sb.append(nvl(p.raw)).append(ls);
+                    }
+                }
+            }
+        }
+
+        private void writePendingReplacingRange(int startIdx, int endIdx, String newComment) {
+            boolean replaced = false;
+            for (int i = 0; i < pending.size(); i++) {
+                PendingLine p = pending.get(i);
+                if (i >= startIdx && i <= endIdx) {
+                    if (p.type == LineType.COMMENT && (p.meta)) {
+                        if (!replaced) {
+                            appendNewComment(sb, newComment, ls);
+                            replaced = true;
+                        }
+                        continue;
+                    }
+                }
+
+                if (p.type == LineType.EMPTY) {
+                    sb.append(ls);
+                } else if (p.type == LineType.COMMENT) {
+                    if (!(true && p.meta && !replaced && i >= startIdx && i <= endIdx)) {
+                        if (!(true && p.meta && i >= startIdx && i <= endIdx)) {
+                            sb.append(nvl(p.raw)).append(ls);
+                        }
+                    }
+                }
+            }
+        }
+
+        private void writePendingReplacingAllComments(int startIdx, int endIdx, String newComment) {
+            boolean replaced = false;
+            for (int i = 0; i < pending.size(); i++) {
+                PendingLine p = pending.get(i);
+                if (i >= startIdx && i <= endIdx && p.type == LineType.COMMENT) {
+                    if (!replaced) {
+                        appendNewComment(sb, newComment, ls);
+                        replaced = true;
+                    }
+                    continue;
+                }
+
+                if (p.type == LineType.EMPTY) {
+                    sb.append(ls);
+                } else if (p.type == LineType.COMMENT) {
+                    sb.append(nvl(p.raw)).append(ls);
+                }
+            }
+        }
+
+        private String joinPendingComments(boolean metaOnly) {
+            StringBuilder b = new StringBuilder();
+            for (PendingLine p : pending) {
+                if (p.type != LineType.COMMENT) {
+                    continue;
+                }
+                if (metaOnly && !p.meta) {
+                    continue;
+                }
+                String trimmed = p.raw == null ? "" : p.raw.trim();
+                if (!isCommentLine(trimmed)) {
+                    continue;
+                }
+                String content = stripCommentPrefix(trimmed);
+                String t = content.trim();
+                if (t.isEmpty()) {
+                    continue;
+                }
+                if (b.length() > 0) {
+                    b.append(" & ");
+                }
+                b.append(t);
+            }
+            return b.toString();
+        }
+
+        private static boolean equalsNullable(String a, String b) {
+            return Objects.equals(a, b);
+        }
+    }
+
+    private static final class PendingLine {
+        final LineType type;
+        final String raw;
+        final boolean meta;
+
+        private PendingLine(LineType type, String raw, boolean meta) {
+            this.type = type;
+            this.raw = raw;
+            this.meta = meta;
+        }
+
+        static PendingLine empty() {
+            return new PendingLine(LineType.EMPTY, null, false);
+        }
+
+        static PendingLine comment(String raw, boolean meta) {
+            return new PendingLine(LineType.COMMENT, raw, meta);
+        }
     }
 
     private static void appendNewComment(StringBuilder sb, String comment, String ls) {
@@ -438,7 +740,7 @@ public class FlatIni implements FlatService {
         return false;
     }
 
-    private static String dumpPlainFallback(Map<String, FileDataItem> data, String ls) {
+    private static String dumpPlainFallback(Map<String, FileDataItem> data) {
         List<String> keys = new ArrayList<>();
         for (String k : data.keySet()) {
             if (k != null && !META_KEY.equals(k)) {
@@ -451,14 +753,14 @@ public class FlatIni implements FlatService {
         for (String k : keys) {
             FileDataItem item = data.get(k);
             if (item != null) {
-                appendNewComment(sb, item.getComment(), ls);
-                sb.append(k).append("=").append(safeValue(item)).append(ls);
+                appendNewComment(sb, item.getComment(), FlatIni.DEFAULT_LS);
+                sb.append(k).append("=").append(safeValue(item)).append(FlatIni.DEFAULT_LS);
             }
         }
-        return trimTrailingIfNeeded(sb.toString(), ls);
+        return trimTrailingIfNeeded(sb.toString(), FlatIni.DEFAULT_LS);
     }
 
-    private static String dumpSectionedFallback(Map<String, FileDataItem> data, String ls) {
+    private static String dumpSectionedFallback(Map<String, FileDataItem> data) {
         List<SectionedItem> items = collectSectionedItems(data);
         sortSectionedItems(items);
 
@@ -471,27 +773,27 @@ public class FlatIni implements FlatService {
             }
             if (!it.section.equals(currentSection)) {
                 currentSection = it.section;
-                sb.append("[").append(currentSection).append("]").append(ls);
+                sb.append("[").append(currentSection).append("]").append(FlatIni.DEFAULT_LS);
             }
             FileDataItem item = data.get(it.originalKey);
             if (item == null) {
                 continue;
             }
 
-            appendNewComment(sb, item.getComment(), ls);
+            appendNewComment(sb, item.getComment(), FlatIni.DEFAULT_LS);
             if (isEmptySectionPlaceholder(it.originalKey, item)) {
                 continue;
             }
 
             String v = safeValue(item);
             if (it.host != null && !it.host.isEmpty()) {
-                appendHostLine(sb, it.host, v, ls);
+                appendHostLine(sb, it.host, v, FlatIni.DEFAULT_LS);
             } else {
-                sb.append(v).append(ls);
+                sb.append(v).append(FlatIni.DEFAULT_LS);
             }
         }
 
-        return trimTrailingIfNeeded(sb.toString(), ls);
+        return trimTrailingIfNeeded(sb.toString(), FlatIni.DEFAULT_LS);
     }
 
     private static List<SectionedItem> collectSectionedItems(Map<String, FileDataItem> data) {
@@ -1090,27 +1392,6 @@ public class FlatIni implements FlatService {
             return sb.toString();
         }
 
-        private static String stripCommentPrefix(String trimmed) {
-            if (trimmed.startsWith("#") || trimmed.startsWith(";")) {
-                return trimmed.substring(1).trim();
-            }
-            return trimmed.trim();
-        }
-
-        private static boolean isMetaComment(String content, String section) {
-            String c = content.toLowerCase(Locale.ROOT);
-            if (c.contains("ansible_")) {
-                return false;
-            }
-            if (isChildrenSection(section)) {
-                return true;
-            }
-            return !HOST_LINE_PATTERN.matcher(c).matches();
-        }
-
-        private static boolean isChildrenSection(String section) {
-            return section != null && section.endsWith(":children");
-        }
 
         private static ParsedSectionedLine parseSectionedLine(String rawLine, String section) {
             int start = firstNonWhitespace(rawLine);
