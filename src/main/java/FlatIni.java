@@ -538,7 +538,7 @@ public class FlatIni implements FlatService {
 
             FileDataItem item = data.get(dataEntry.key);
             if (item == null) {
-                flushPendingForMissingItem(hasMeta);
+                flushPendingStandalone();
                 pending.clear();
                 return;
             }
@@ -572,34 +572,13 @@ public class FlatIni implements FlatService {
             pending.clear();
         }
 
-        private void flushPendingForMissingItem(boolean hasMeta) {
-            if (!hasMeta) {
-                flushPendingStandalone();
-                return;
-            }
-
-            boolean wrote = false;
-            for (PendingLine p : pending) {
-                if (p.type == LineType.EMPTY) {
-                    if (wrote) {
-                        sb.append(ls);
-                    }
-                } else if (p.type == LineType.COMMENT && !p.meta) {
-                        sb.append(nvl(p.raw)).append(ls);
-                        wrote = true;
-                    }
-
-            }
-        }
-
         private void writePendingExcludingMeta() {
             for (PendingLine p : pending) {
                 if (p.type == LineType.EMPTY) {
                     sb.append(ls);
                 } else if (p.type == LineType.COMMENT && !p.meta) {
-                        sb.append(nvl(p.raw)).append(ls);
-                    }
-
+                    sb.append(nvl(p.raw)).append(ls);
+                }
             }
         }
 
@@ -607,22 +586,19 @@ public class FlatIni implements FlatService {
             boolean replaced = false;
             for (int i = 0; i < pending.size(); i++) {
                 PendingLine p = pending.get(i);
-                if (i >= startIdx && i <= endIdx && p.type == LineType.COMMENT && (p.meta)) {
-                        if (!replaced) {
-                            appendNewComment(sb, newComment, ls);
-                            replaced = true;
-                        }
-                        continue;
+                if (i >= startIdx && i <= endIdx && p.type == LineType.COMMENT && p.meta) {
+                    if (!replaced) {
+                        appendNewComment(sb, newComment, ls);
+                        replaced = true;
                     }
-
+                    continue;
+                }
 
                 if (p.type == LineType.EMPTY) {
                     sb.append(ls);
                 } else if (p.type == LineType.COMMENT && !(p.meta && i >= startIdx && i <= endIdx)) {
-                            sb.append(nvl(p.raw)).append(ls);
-                        }
-
-
+                    sb.append(nvl(p.raw)).append(ls);
+                }
             }
         }
 
