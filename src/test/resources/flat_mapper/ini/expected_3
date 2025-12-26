@@ -7,11 +7,6 @@ localhost ansible_connection=local
 #PES
 tslds-efs002568.ufsflcore.delta.sbrf.ru ansible_host=tslds-efs002568.delta.sbrf.ru ansible_user="{{ SSD_SSH_USER }}" ansible_ssh_private_key_file="{{ vm_ssd_ssh_cred }}"
 
-[green]
-#хост под Sberl
-#tklds-efs001351.ufsflcore.delta.sbrf.ru ansible_host=tklds-efs001351.ufsflcore.delta.sbrf.ru ansible_user="{{ SSD_SSH_USER }}" ansible_ssh_private_key_file="{{ vm_ssd_ssh_cred }}"
-#PES
-tslds-efs002569.ufsflcore.delta.sbrf.ru ansible_host=tslds-efs002569.delta.sbrf.ru ansible_user="{{ SSD_SSH_USER }}" ansible_ssh_private_key_file="{{ vm_ssd_ssh_cred }}"
 
 
 [vm_sds_master:children]
