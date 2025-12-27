@@ -405,9 +405,7 @@ public class FlatIni implements FlatService {
             }
         }
 
-        for (int i = 0; i < trailingEmpty; i++) {
-            out.append(ls);
-        }
+        out.append(String.valueOf(ls).repeat(Math.max(0, trailingEmpty)));
     }
 
     private static Map<String, List<String>> computeExtras(Map<String, FileDataItem> items, Set<String> metaKeys) {
@@ -900,7 +898,7 @@ public class FlatIni implements FlatService {
             int min = Integer.MAX_VALUE;
             String token = TOKEN_N;
 
-            if (rn >= 0 && rn < min) {
+            if (rn >= 0) {
                 min = rn;
                 token = TOKEN_RN;
             }
@@ -909,7 +907,6 @@ public class FlatIni implements FlatService {
                 token = TOKEN_R;
             }
             if (n >= 0 && n < min) {
-                min = n;
                 token = TOKEN_N;
             }
             return token;
@@ -1008,12 +1005,11 @@ public class FlatIni implements FlatService {
             try {
                 idx = Integer.parseInt(idxStr.trim());
             } catch (NumberFormatException ignored) {
-                idx = 0;
             }
             String host = null;
             if (rb + 1 < key.length() && key.charAt(rb + 1) == '.') {
                 host = key.substring(rb + 2);
-                if (host != null && host.isEmpty()) {
+                if (host.isEmpty()) {
                     host = null;
                 }
             }
