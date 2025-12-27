@@ -347,7 +347,7 @@ public class FlatIni implements FlatService {
             extras.sort(Comparator.comparingInt(a -> ParsedKey.parse(a).index));
             for (String k : extras) {
                 FileDataItem item = items.get(k);
-                if (item == null) {
+                if (item == null || META_KEY.equals(k)) {
                     continue;
                 }
                 appendCommentBlock(out, item.getComment(), ls);
@@ -366,9 +366,7 @@ public class FlatIni implements FlatService {
             }
         }
 
-        for (int i = 0; i < trailingEmpty; i++) {
-            out.append(ls);
-        }
+        out.append(String.valueOf(ls).repeat(Math.max(0, trailingEmpty)));
     }
 
     private static void renderRemainingExtras(StringBuilder out,
@@ -627,7 +625,7 @@ public class FlatIni implements FlatService {
             } else if (c == 'C') {
                 structure.add(LineEntry.comment(unb64(p)));
             } else if (c == 'D') {
-                String[] parts = splitTabs(line, 4);
+                String[] parts = splitTabs4(line);
                 String key = unb64(parts[1]);
                 String prefix = unb64(parts[2]);
                 String suffix = unb64(parts[3]);
@@ -639,23 +637,27 @@ public class FlatIni implements FlatService {
         return meta;
     }
 
-    private static String[] splitTabs(String line, int expected) {
-        String[] out = new String[expected];
+    private static String[] splitTabs4(String line) {
+        String[] out = new String[4];
         int start = 0;
-        for (int i = 0; i < expected - 1; i++) {
+        for (int i = 0; i < 3; i++) {
             int t = line.indexOf('\t', start);
             if (t < 0) {
                 out[i] = line.substring(start);
-                start = line.length();
-                for (int j = i + 1; j < expected; j++) {
+                for (int j = i + 1; j < 4; j++) {
                     out[j] = "";
+                }
+                for (int k = 0; k < out.length; k++) {
+                    if (out[k] == null) {
+                        out[k] = "";
+                    }
                 }
                 return out;
             }
             out[i] = line.substring(start, t);
             start = t + 1;
         }
-        out[expected - 1] = start <= line.length() ? line.substring(start) : "";
+        out[3] = start <= line.length() ? line.substring(start) : "";
         for (int i = 0; i < out.length; i++) {
             if (out[i] == null) {
                 out[i] = "";
@@ -884,6 +886,49 @@ public class FlatIni implements FlatService {
         return -1;
     }
 
+    private static final class ParsedText {
+        final List<String> lines;
+        final String lineSepToken;
+        final boolean endsWithNewline;
+
+        private ParsedText(List<String> lines, String lineSepToken, boolean endsWithNewline) {
+            this.lines = lines;
+            this.lineSepToken = lineSepToken;
+            this.endsWithNewline = endsWithNewline;
+        }
+
+        static ParsedText from(String data) {
+            String token = detectLineSepToken(data);
+            boolean ends = data.endsWith("\n") || data.endsWith("\r");
+
+            String[] raw = data.split("\\R", -1);
+            List<String> lines = new ArrayList<>(raw.length);
+            Collections.addAll(lines, raw);
+
+            if (ends && !lines.isEmpty() && lines.get(lines.size() - 1).isEmpty()) {
+                lines.remove(lines.size() - 1);
+            }
+
+            return new ParsedText(lines, token, ends);
+        }
+
+        private static String detectLineSepToken(String data) {
+            int idx = data.indexOf("\r\n");
+            if (idx >= 0) {
+                return TOKEN_RN;
+            }
+            idx = data.indexOf('\n');
+            if (idx >= 0) {
+                return TOKEN_N;
+            }
+            idx = data.indexOf('\r');
+            if (idx >= 0) {
+                return TOKEN_R;
+            }
+            return TOKEN_N;
+        }
+    }
+
     private enum LineType {
         EMPTY, SECTION, COMMENT, DATA
     }
@@ -916,7 +961,7 @@ public class FlatIni implements FlatService {
         }
 
         static LineEntry data(String key, String prefix, String suffix) {
-            return new LineEntry(LineType.DATA, null, key, prefix, suffix);
+            return new LineEntry(LineType.DATA, null, key, prefix == null ? "" : prefix, suffix == null ? "" : suffix);
         }
     }
 
@@ -924,88 +969,6 @@ public class FlatIni implements FlatService {
         String lineSepToken;
         boolean endsWithNewline;
         List<LineEntry> structure;
-    }
-
-    private static final class ParsedText {
-        final List<String> lines;
-        final String lineSepToken;
-        final boolean endsWithNewline;
-
-        private ParsedText(List<String> lines, String lineSepToken, boolean endsWithNewline) {
-            this.lines = lines;
-            this.lineSepToken = lineSepToken;
-            this.endsWithNewline = endsWithNewline;
-        }
-
-        static ParsedText from(String text) {
-            if (text == null) {
-                text = "";
-            }
-            if (text.isEmpty()) {
-                return new ParsedText(Collections.emptyList(), TOKEN_N, false);
-            }
-
-            String ls = detectLineSep(text);
-            String token = detectToken(ls);
-            boolean ends = text.endsWith(ls);
-
-            List<String> lines = new ArrayList<>();
-            int idx = 0;
-            while (idx <= text.length()) {
-                int next = text.indexOf(ls, idx);
-                if (next < 0) {
-                    lines.add(text.substring(idx));
-                    break;
-                }
-                lines.add(text.substring(idx, next));
-                idx = next + ls.length();
-                if (idx == text.length()) {
-                    lines.add("");
-                    break;
-                }
-            }
-
-            return new ParsedText(lines, token, ends);
-        }
-
-        private static String detectLineSep(String text) {
-            int rn = text.indexOf("\r\n");
-            if (rn >= 0) {
-                return "\r\n";
-            }
-            int n = text.indexOf('\n');
-            int r = text.indexOf('\r');
-            if (n >= 0 && r >= 0) {
-                return n < r ? "\n" : "\r";
-            }
-            if (n >= 0) {
-                return "\n";
-            }
-            if (r >= 0) {
-                return "\r";
-            }
-            return "\n";
-        }
-
-        private static String detectToken(String ls) {
-            if ("\r\n".equals(ls)) {
-                return TOKEN_RN;
-            }
-            if ("\r".equals(ls)) {
-                return TOKEN_R;
-            }
-            return TOKEN_N;
-        }
-    }
-
-    private static final class Segment {
-        final String sectionName;
-        final List<LineEntry> entries;
-
-        private Segment(String sectionName, List<LineEntry> entries) {
-            this.sectionName = sectionName;
-            this.entries = entries;
-        }
     }
 
     private static final class ParsedKey {
@@ -1020,26 +983,35 @@ public class FlatIni implements FlatService {
         }
 
         static ParsedKey parse(String key) {
-            if (key == null) {
-                return new ParsedKey(null, -1, null);
+            if (key == null || key.isEmpty()) {
+                return new ParsedKey(null, 0, null);
             }
+
             int lb = key.indexOf('[');
-            int rb = key.indexOf(']');
-            if (lb < 0 || rb < 0 || rb < lb) {
-                return new ParsedKey(null, -1, null);
+            int rb = lb < 0 ? -1 : key.indexOf(']', lb + 1);
+            if (lb < 0 || rb < 0) {
+                return new ParsedKey(null, 0, null);
             }
-            String sec = key.substring(0, lb);
-            int idx;
-            try {
-                idx = Integer.parseInt(key.substring(lb + 1, rb));
-            } catch (NumberFormatException ex) {
-                idx = -1;
+
+            String section = lb == 0 ? null : key.substring(0, lb);
+            String idxStr = key.substring(lb + 1, rb).trim();
+            int idx = 0;
+            if (!idxStr.isEmpty()) {
+                try {
+                    idx = Integer.parseInt(idxStr);
+                } catch (NumberFormatException ignored) {
+                }
             }
+
             String host = null;
             if (rb + 1 < key.length() && key.charAt(rb + 1) == '.') {
                 host = key.substring(rb + 2);
+                if (host.isEmpty()) {
+                    host = null;
+                }
             }
-            return new ParsedKey(sec, idx, host);
+
+            return new ParsedKey(section, idx, host);
         }
     }
 
@@ -1068,6 +1040,16 @@ public class FlatIni implements FlatService {
             this.value = value == null ? "" : value;
             this.prefix = prefix == null ? "" : prefix;
             this.suffix = suffix == null ? "" : suffix;
+        }
+    }
+
+    private static final class Segment {
+        final String sectionName;
+        final List<LineEntry> entries;
+
+        private Segment(String sectionName, List<LineEntry> entries) {
+            this.sectionName = sectionName;
+            this.entries = entries == null ? Collections.emptyList() : entries;
         }
     }
 }
