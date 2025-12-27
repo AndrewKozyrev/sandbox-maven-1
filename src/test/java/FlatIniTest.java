@@ -8,6 +8,7 @@ import java.util.HashMap;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
@@ -15,6 +16,7 @@ class FlatIniTest {
 
     private static final String INPUT_1 = "src/test/resources/flat_mapper/ini/input_1";
     private static final String INPUT_2 = "src/test/resources/flat_mapper/ini/input_2";
+    private static final String INPUT_3 = "src/test/resources/flat_mapper/ini/input_3";
     private static final String EXPECTED_1 = "src/test/resources/flat_mapper/ini/expected_1";
     private static final String EXPECTED_2 = "src/test/resources/flat_mapper/ini/expected_2";
     private static final String EXPECTED_3 = "src/test/resources/flat_mapper/ini/expected_3";
@@ -27,7 +29,7 @@ class FlatIniTest {
     private static final String EXPECTED_10 = "src/test/resources/flat_mapper/ini/expected_10";
 
     @Test
-    void flatToMap_flattensCorrectly() throws Exception {
+    void mapsCorrectly() throws Exception {
         var inputData = Files.readString(Paths.get(INPUT_1));
         var map = new FlatIni().flatToMap(inputData);
 
@@ -55,7 +57,30 @@ class FlatIniTest {
     }
 
     @Test
-    void flatToString_unflattensCorrectly() throws Exception {
+    void mapsCorrectly2() throws Exception {
+        var inputData = Files.readString(Paths.get(INPUT_3));
+        var map = new FlatIni().flatToMap(inputData);
+
+        assertEquals("value_1", map.get("section_1[0].param_1").getValue());
+        assertEquals("# comment part 1\n#comment part 2\n## comment part 3", map.get("section_1[0].param_1").getComment());
+
+        assertEquals("value_2", map.get("section_1[1].param_2").getValue());
+        assertNull(map.get("section_1[1].param_2").getComment());
+
+        assertEquals("value_3", map.get("section_1[2].param_3").getValue());
+        assertEquals("# comment for param_3", map.get("section_1[2].param_3").getComment());
+
+        assertEquals("param_4", map.get("section_2[0]").getValue());
+        assertNull(map.get("section_2[0]").getComment());
+
+        assertEquals("param_5", map.get("section_2[1]").getValue());
+        assertNull(map.get("section_2[1]").getComment());
+
+        assertFalse(map.containsKey("section[3]"));
+    }
+
+    @Test
+    void unflattensCorrectly() throws Exception {
         var inputData = Files.readString(Paths.get(INPUT_1));
         var map = new FlatIni().flatToMap(inputData);
 
@@ -64,7 +89,7 @@ class FlatIniTest {
     }
 
     @Test
-    void flatToMap_singleParameter() throws Exception {
+    void singleParameter() throws Exception {
         var inputData = Files.readString(Paths.get(INPUT_2));
         var map = new FlatIni().flatToMap(inputData);
 
@@ -76,7 +101,7 @@ class FlatIniTest {
     }
 
     @Test
-    void flatToMap_correctOrderOfParams() throws Exception {
+    void correctOrderOfParams() throws Exception {
         var inputData = Files.readString(Paths.get(INPUT_1));
 
         var map = new FlatIni().flatToMap(inputData);
@@ -105,7 +130,7 @@ class FlatIniTest {
     }
 
     @Test
-    void flatToString_commentsMapping() throws Exception {
+    void commentsMapping() throws Exception {
         var item1 = new FileDataItem();
         item1.setKey("key1");
         item1.setValue("value1");
@@ -155,7 +180,7 @@ class FlatIniTest {
     }
 
     @Test
-    void flatToString_simpleSection() throws Exception {
+    void simpleSection() throws Exception {
         var item1 = new FileDataItem();
         item1.setKey("section1[0]");
         item1.setValue("param1=value1");
