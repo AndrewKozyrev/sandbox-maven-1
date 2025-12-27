@@ -1,3 +1,5 @@
+package mappers;
+
 import org.apache.commons.lang3.NotImplementedException;
 import org.yaml.snakeyaml.DumperOptions;
 import org.yaml.snakeyaml.Yaml;

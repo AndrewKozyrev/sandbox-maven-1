@@ -1,3 +1,5 @@
+package mappers;
+
 import java.util.Map;
 
 public interface FlatService {

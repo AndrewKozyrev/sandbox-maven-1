@@ -1,3 +1,5 @@
+package mappers;
+
 import org.apache.commons.lang3.NotImplementedException;
 
 import java.nio.charset.StandardCharsets;
