@@ -29,6 +29,7 @@ class FlatIniTest {
     private static final String EXPECTED_8 = "src/test/resources/flat_mapper/ini/expected_8";
     private static final String EXPECTED_9 = "src/test/resources/flat_mapper/ini/expected_9";
     private static final String EXPECTED_10 = "src/test/resources/flat_mapper/ini/expected_10";
+    private static final String EXPECTED_11 = "src/test/resources/flat_mapper/ini/expected_11";
 
     @Test
     void mapsCorrectly() throws Exception {
@@ -278,6 +279,19 @@ class FlatIniTest {
 
         var actual = new FlatIni().flatToString(map);
         var expected = Files.readString(Paths.get(EXPECTED_9));
+        assertEquals(expected, actual);
+    }
+
+    @Test
+    void keepingEmptyLines() throws Exception {
+        var inputData = Files.readString(Paths.get(INPUT_3));
+        var map = new FlatIni().flatToMap(inputData);
+
+        map.remove("section_2[0]");
+        map.remove("section_2[1]");
+
+        var actual = new FlatIni().flatToString(map);
+        var expected = Files.readString(Paths.get(EXPECTED_11));
         assertEquals(expected, actual);
     }
 }
