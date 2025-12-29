@@ -44,8 +44,9 @@ public class FlatIni implements FlatService {
             return dumpFallback(data, System.lineSeparator());
         }
 
+        Map<String, FileDataItem> filtered = filterEmptySectionPlaceholders(data, meta);
         String ls = tokenToLineSep(meta.lineSepToken);
-        String out = new DumpContext(data, meta, ls).dump();
+        String out = new DumpContext(filtered, meta, ls).dump();
 
         int desiredSeps;
         if (!meta.endsWithNewline) {
@@ -59,6 +60,41 @@ public class FlatIni implements FlatService {
     @Override
     public void validate(Map<String, FileDataItem> data) {
         throw new UnsupportedOperationException("Validation of .ini files is not implemented yet.");
+    }
+
+    private static Map<String, FileDataItem> filterEmptySectionPlaceholders(Map<String, FileDataItem> data,
+                                                                            MetaState meta) {
+        if (data == null || data.isEmpty() || meta == null || meta.structure == null) {
+            return data;
+        }
+
+        Set<String> sectionNames = new HashSet<>();
+        for (LineEntry e : meta.structure) {
+            if (e != null && e.type == LineType.SECTION) {
+                String raw = e.text == null ? "" : e.text.trim();
+                String name = extractSectionNameFromHeader(raw);
+                if (name != null && !name.isEmpty()) {
+                    sectionNames.add(name);
+                }
+            }
+        }
+        if (sectionNames.isEmpty()) {
+            return data;
+        }
+
+        Map<String, FileDataItem> result = new LinkedHashMap<>(data.size());
+        for (Map.Entry<String, FileDataItem> entry : data.entrySet()) {
+            String k = entry.getKey();
+            FileDataItem v = entry.getValue();
+            if (k != null
+                    && !META_KEY.equals(k)
+                    && sectionNames.contains(k)
+                    && ParsedKey.parse(k).section == null) {
+                continue;
+            }
+            result.put(k, v);
+        }
+        return result;
     }
 
     private static void processRawLine(ParseContext ctx, String rawLine) {
@@ -988,6 +1024,7 @@ public class FlatIni implements FlatService {
         final List<LineEntry> structure = new ArrayList<>();
         final Map<String, Integer> sectionCounters = new HashMap<>();
         final List<String> pendingComments = new ArrayList<>();
+        final Set<String> emptySectionCandidates = new HashSet<>();
         final String lineSepToken;
         final boolean endsWithNewline;
         String currentSection;
@@ -1007,6 +1044,14 @@ public class FlatIni implements FlatService {
             currentSection = extractSectionNameFromHeader(trimmed);
             if (currentSection != null) {
                 sectionCounters.putIfAbsent(currentSection, 0);
+                if (!out.containsKey(currentSection)) {
+                    FileDataItem item = new FileDataItem();
+                    item.setKey(currentSection);
+                    item.setValue("");
+                    item.setComment(null);
+                    out.put(currentSection, item);
+                    emptySectionCandidates.add(currentSection);
+                }
             }
             pendingComments.clear();
         }
@@ -1050,6 +1095,11 @@ public class FlatIni implements FlatService {
                 structure.add(LineEntry.comment(rawLine));
                 pendingComments.clear();
                 return;
+            }
+
+            if (currentSection != null && emptySectionCandidates.contains(currentSection)) {
+                out.remove(currentSection);
+                emptySectionCandidates.remove(currentSection);
             }
 
             String key = buildSectionKey(currentSection, idx, sl.host);

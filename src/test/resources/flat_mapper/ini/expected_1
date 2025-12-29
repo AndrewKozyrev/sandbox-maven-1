@@ -3,6 +3,7 @@ blue[0].tslds-efs002568.ufsflcore.delta.sbrf.ru = ansible_host=tslds-efs002568.d
 green[0].tslds-efs002569.ufsflcore.delta.sbrf.ru = ansible_host=tslds-efs002569.delta.sbrf.ru ansible_user="{{ SSD_SSH_USER }}" ansible_ssh_private_key_file="{{ vm_ssd_ssh_cred }}"
 vm_sds_master:children[0] = blue
 vm_sds_master:children[1] = green
+nginx_mm =
 nginx_node_mm[0] = tslds-efs002568.ufsflcore.delta.sbrf.ru
 nginx_node_mm[1] = tslds-efs002569.ufsflcore.delta.sbrf.ru
 hosts:children[0] = local

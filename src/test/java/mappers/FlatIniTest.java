@@ -10,9 +10,9 @@ import java.util.HashMap;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class FlatIniTest {
 
@@ -31,6 +31,7 @@ class FlatIniTest {
     private static final String EXPECTED_9 = "src/test/resources/flat_mapper/ini/expected_9";
     private static final String EXPECTED_10 = "src/test/resources/flat_mapper/ini/expected_10";
     private static final String EXPECTED_11 = "src/test/resources/flat_mapper/ini/expected_11";
+    private static final String EXPECTED_12 = "src/test/resources/flat_mapper/ini/expected_12";
 
     @Test
     void mapsCorrectly() throws Exception {
@@ -56,6 +57,10 @@ class FlatIniTest {
         assertEquals("tslds-efs002569.ufsflcore.delta.sbrf.ru", map.get("nginx_node_mm[1]").getValue());
         assertNull(map.get("nginx_node_mm[1]").getComment());
 
+        assertTrue(map.containsKey("nginx_mm"));
+        assertEquals("", map.get("nginx_mm").getValue());
+        assertNull(map.get("nginx_mm").getComment());
+
         assertNull(map.get("\u0000__flat_ini_meta__").getComment());
         assertNotNull(map.get("\u0000__flat_ini_meta__").getValue());
     }
@@ -80,7 +85,9 @@ class FlatIniTest {
         assertEquals("param_5", map.get("section_2[1]").getValue());
         assertNull(map.get("section_2[1]").getComment());
 
-        assertFalse(map.containsKey("section[3]"));
+        assertTrue(map.containsKey("section_3"));
+        assertEquals("", map.get("section_3").getValue());
+        assertNull(map.get("section_3").getComment());
     }
 
     @Test
@@ -112,9 +119,6 @@ class FlatIniTest {
 
         var actual = new ArrayList<>(map.values());
 
-        for (FileDataItem fileDataItem : actual) {
-            System.out.println(fileDataItem.getKey() + " = " + fileDataItem.getValue());
-        }
         var expected = Files.readAllLines(Paths.get(EXPECTED_1))
                 .stream()
                 .map(x -> x.split("\\s*=\\s*", 2))
@@ -129,7 +133,7 @@ class FlatIniTest {
             assertEquals(expectedKey, actualKey);
             var actualValue = actual.get(i).getValue();
             var expectedValue = expected.get(i).getValue();
-            assertEquals(expectedValue, actualValue);
+            assertEquals(expectedValue, actualValue, expectedKey);
         }
     }
 
@@ -328,5 +332,30 @@ class FlatIniTest {
         var actual = new FlatIni().flatToString(map);
 
         assertEquals(inputFile, actual);
+    }
+
+    @Test
+    void addingParameterToEmptySectionThenRemovingIt() throws Exception {
+        var inputFile = Files.readString(Paths.get(INPUT_1));
+        var map = new FlatIni().flatToMap(inputFile);
+
+        map.put(
+                "nginx_mm[0].new_param",
+                FileDataItem.builder()
+                        .key("nginx_mm[0].new_param")
+                        .value("new_value")
+                        .build()
+        );
+
+        var inputFile2 = new FlatIni().flatToString(map);
+
+        var map2 = new FlatIni().flatToMap(inputFile2);
+
+        map2.remove("nginx_mm[0].new_param");
+
+        var actual = new FlatIni().flatToString(map2);
+        var expected = Files.readString(Paths.get(EXPECTED_12));
+
+        assertEquals(expected, actual);
     }
 }
