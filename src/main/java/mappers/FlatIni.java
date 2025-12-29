@@ -44,9 +44,8 @@ public class FlatIni implements FlatService {
             return dumpFallback(data, System.lineSeparator());
         }
 
-        Map<String, FileDataItem> filtered = filterEmptySectionPlaceholders(data, meta);
         String ls = tokenToLineSep(meta.lineSepToken);
-        String out = new DumpContext(filtered, meta, ls).dump();
+        String out = new DumpContext(data, meta, ls).dump();
 
         int desiredSeps;
         if (!meta.endsWithNewline) {
@@ -60,41 +59,6 @@ public class FlatIni implements FlatService {
     @Override
     public void validate(Map<String, FileDataItem> data) {
         throw new UnsupportedOperationException("Validation of .ini files is not implemented yet.");
-    }
-
-    private static Map<String, FileDataItem> filterEmptySectionPlaceholders(Map<String, FileDataItem> data,
-                                                                            MetaState meta) {
-        if (data == null || data.isEmpty() || meta == null || meta.structure == null) {
-            return data;
-        }
-
-        Set<String> sectionNames = new HashSet<>();
-        for (LineEntry e : meta.structure) {
-            if (e != null && e.type == LineType.SECTION) {
-                String raw = e.text == null ? "" : e.text.trim();
-                String name = extractSectionNameFromHeader(raw);
-                if (name != null && !name.isEmpty()) {
-                    sectionNames.add(name);
-                }
-            }
-        }
-        if (sectionNames.isEmpty()) {
-            return data;
-        }
-
-        Map<String, FileDataItem> result = new LinkedHashMap<>(data.size());
-        for (Map.Entry<String, FileDataItem> entry : data.entrySet()) {
-            String k = entry.getKey();
-            FileDataItem v = entry.getValue();
-            if (k != null
-                    && !META_KEY.equals(k)
-                    && sectionNames.contains(k)
-                    && ParsedKey.parse(k).section == null) {
-                continue;
-            }
-            result.put(k, v);
-        }
-        return result;
     }
 
     private static void processRawLine(ParseContext ctx, String rawLine) {
@@ -141,7 +105,7 @@ public class FlatIni implements FlatService {
             List<LineEntry> structure = meta == null || meta.structure == null ? Collections.emptyList() : meta.structure;
             this.segments = splitSegments(structure);
             this.metaKeys = collectMetaKeys(structure);
-            this.extrasBySection = computeExtras(this.items, this.metaKeys);
+            this.extrasBySection = computeExtras(this.items, this.metaKeys, this.segments);
             this.printed = new HashSet<>();
             this.ls = ls == null ? System.lineSeparator() : ls;
             this.out = new StringBuilder();
@@ -156,8 +120,33 @@ public class FlatIni implements FlatService {
             return out.toString();
         }
 
+
+        private boolean sectionHasAnyKeys(String section) {
+            if (section == null) {
+                return true;
+            }
+            if (items == null) {
+                return false;
+            }
+            for (String k : items.keySet()) {
+                if (k == null) {
+                    continue;
+                }
+                if (section.equals(k)) {
+                    return true;
+                }
+                ParsedKey pk = ParsedKey.parse(k);
+                if (section.equals(pk.section)) {
+                    return true;
+                }
+            }
+            return false;
+        }
         private void renderSegmentOrEmpty(Segment seg) {
             List<String> extras = extrasForSegment(seg);
+            if (!sectionHasAnyKeys(seg == null ? null : seg.section)) {
+                return;
+            }
             if (shouldRenderOnlyEmptyLines(seg, extras)) {
                 renderer.renderOnlyEmptyLines(seg);
                 return;
@@ -182,7 +171,7 @@ public class FlatIni implements FlatService {
         }
 
         private void appendRemainingExtras() {
-            GroupedKeys keys = collectUnprintedKeys(items, printed, metaKeys);
+            GroupedKeys keys = collectUnprintedKeys(items, printed, metaKeys, segments);
             appendRootEntries(out, items, keys.rootKeys, printed, ls);
             appendSectionEntries(out, items, keys.bySection, printed, ls);
         }
@@ -203,7 +192,8 @@ public class FlatIni implements FlatService {
 
     private static GroupedKeys collectUnprintedKeys(Map<String, FileDataItem> items,
                                                     Set<String> printedKeys,
-                                                    Set<String> metaKeys) {
+                                                    Set<String> metaKeys,
+                                                    List<Segment> segments) {
         Map<String, List<String>> bySection = new HashMap<>();
         List<String> rootKeys = new ArrayList<>();
 
@@ -211,9 +201,21 @@ public class FlatIni implements FlatService {
             return new GroupedKeys(rootKeys, bySection);
         }
 
+        Set<String> sectionNames = new HashSet<>();
+        if (segments != null) {
+            for (Segment seg : segments) {
+                if (seg != null && seg.section != null) {
+                    sectionNames.add(seg.section);
+                }
+            }
+        }
+
         for (String k : items.keySet()) {
             if (!shouldSkipAsExtra(k, printedKeys, metaKeys)) {
                 ParsedKey pk = ParsedKey.parse(k);
+                if (pk.section == null && pk.host == null && sectionNames.contains(k)) {
+                    continue;
+                }
                 if (pk.section == null) {
                     rootKeys.add(k);
                 } else {
@@ -517,17 +519,37 @@ public class FlatIni implements FlatService {
         }
     }
 
-    private static Map<String, List<String>> computeExtras(Map<String, FileDataItem> items, Set<String> metaKeys) {
+    private static Map<String, List<String>> computeExtras(Map<String, FileDataItem> items,
+                                                           Set<String> metaKeys,
+                                                           List<Segment> segments) {
         Map<String, List<String>> bySection = new HashMap<>();
         if (items == null) {
             return bySection;
         }
+        Set<String> sectionNames = new HashSet<>();
+        if (segments != null) {
+            for (Segment seg : segments) {
+                if (seg != null && seg.section != null) {
+                    sectionNames.add(seg.section);
+                }
+            }
+        }
         for (String k : items.keySet()) {
             boolean include = k != null && !META_KEY.equals(k) && (metaKeys == null || !metaKeys.contains(k));
-            if (include) {
-                ParsedKey pk = ParsedKey.parse(k);
-                bySection.computeIfAbsent(pk.section, x -> new ArrayList<>()).add(k);
+            if (!include) {
+                continue;
             }
+            FileDataItem item = items.get(k);
+            ParsedKey pk = ParsedKey.parse(k);
+            String sec = pk.section;
+            if (sec == null && pk.host == null && sectionNames.contains(k)) {
+                String v = item == null ? null : item.getValue().toString();
+                if (v == null || v.isEmpty()) {
+                    continue;
+                }
+                sec = k;
+            }
+            bySection.computeIfAbsent(sec, x -> new ArrayList<>()).add(k);
         }
         return bySection;
     }

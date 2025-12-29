@@ -18,6 +18,9 @@ tslds-efs002569.ufsflcore.delta.sbrf.ru ansible_host=tslds-efs002569.delta.sbrf.
 blue
 green
 
+[nginx_mm]
+nginx_mm_new_value
+
 [nginx_node_mm]
 #VM
 #tklds-efs001350.ufsflcore.delta.sbrf.ru

@@ -32,6 +32,7 @@ class FlatIniTest {
     private static final String EXPECTED_10 = "src/test/resources/flat_mapper/ini/expected_10";
     private static final String EXPECTED_11 = "src/test/resources/flat_mapper/ini/expected_11";
     private static final String EXPECTED_12 = "src/test/resources/flat_mapper/ini/expected_12";
+    private static final String EXPECTED_13 = "src/test/resources/flat_mapper/ini/expected_13";
 
     @Test
     void mapsCorrectly() throws Exception {
@@ -354,6 +355,32 @@ class FlatIniTest {
         map2.remove("nginx_mm[0].new_param");
 
         var actual = new FlatIni().flatToString(map2);
+        var expected = Files.readString(Paths.get(EXPECTED_12));
+
+        assertEquals(expected, actual);
+    }
+
+    @Test
+    void addingParameterToEmptySection() throws Exception {
+        var inputFile = Files.readString(Paths.get(INPUT_1));
+        var map = new FlatIni().flatToMap(inputFile);
+
+        map.get("nginx_mm").setValue("nginx_mm_new_value");
+
+        var actual = new FlatIni().flatToString(map);
+        var expected = Files.readString(Paths.get(EXPECTED_13));
+
+        assertEquals(expected, actual);
+    }
+
+    @Test
+    void removingEmptySection() throws Exception {
+        var inputFile = Files.readString(Paths.get(INPUT_1));
+        var map = new FlatIni().flatToMap(inputFile);
+
+        map.remove("nginx_mm");
+
+        var actual = new FlatIni().flatToString(map);
         var expected = Files.readString(Paths.get(EXPECTED_12));
 
         assertEquals(expected, actual);
