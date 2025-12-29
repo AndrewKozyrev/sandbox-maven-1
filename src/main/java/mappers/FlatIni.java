@@ -1075,10 +1075,10 @@ public class FlatIni implements FlatService {
 
         void onEmptyLine() {
             structure.add(LineEntry.empty());
-            pendingComments.clear();
         }
 
         void onSectionHeader(String rawLine, String trimmed) {
+            flushPendingCommentsForCurrentSection();
             structure.add(LineEntry.section(rawLine));
             currentSection = extractSectionNameFromHeader(trimmed);
             if (currentSection != null) {
@@ -1159,7 +1159,26 @@ public class FlatIni implements FlatService {
             item.setComment(joinWithLf(pendingComments));
         }
 
+        void flushPendingCommentsForCurrentSection() {
+            if (currentSection == null || pendingComments.isEmpty()) {
+                return;
+            }
+            FileDataItem item = out.get(currentSection);
+            if (item == null) {
+                return;
+            }
+            String existing = item.getComment();
+            String block = joinWithLf(pendingComments);
+            if (existing == null || existing.isEmpty()) {
+                item.setComment(block);
+            } else {
+                item.setComment(existing + "\n" + block);
+            }
+            pendingComments.clear();
+        }
+
         Map<String, FileDataItem> toResult() {
+            flushPendingCommentsForCurrentSection();
             MetaState meta = new MetaState();
             meta.lineSepToken = lineSepToken;
             meta.endsWithNewline = endsWithNewline;

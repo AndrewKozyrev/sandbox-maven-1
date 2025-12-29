@@ -399,4 +399,14 @@ class FlatIniTest {
 
         assertEquals(expected, actual);
     }
+
+    @Test
+    void mappingEmptySectionWithComment() throws Exception {
+        var inputFile = Files.readString(Paths.get(EXPECTED_14));
+        var map = new FlatIni().flatToMap(inputFile);
+
+        assertTrue(map.containsKey("nginx_mm"));
+        assertEquals("# NEW COMMENT", map.get("nginx_mm").getComment());
+        assertEquals("", map.get("nginx_mm").getValue());
+    }
 }
