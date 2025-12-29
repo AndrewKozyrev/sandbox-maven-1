@@ -47,10 +47,13 @@ public class FlatIni implements FlatService {
         String ls = tokenToLineSep(meta.lineSepToken);
         String out = new DumpContext(data, meta, ls).dump();
 
+        int desiredSeps;
         if (!meta.endsWithNewline) {
-            return trimFinalLineSep(out, ls);
+            desiredSeps = 0;
+        } else {
+            desiredSeps = countTrailingEmpty(meta.structure) + 1;
         }
-        return out;
+        return adjustTrailingLineSeparators(out, ls, desiredSeps);
     }
 
     @Override
@@ -929,6 +932,38 @@ public class FlatIni implements FlatService {
             return s.substring(0, s.length() - ls.length());
         }
         return s;
+    }
+
+
+    private static String adjustTrailingLineSeparators(String s, String ls, int count) {
+        if (s == null || s.isEmpty()) {
+            return "";
+        }
+        if (ls == null || ls.isEmpty()) {
+            return s;
+        }
+        if (count < 0) {
+            count = 0;
+        }
+
+        int existing = 0;
+        int step = ls.length();
+        int i = s.length();
+        while (i >= step && s.startsWith(ls, i - step)) {
+            existing++;
+            i -= step;
+        }
+
+        if (existing == count) {
+            return s;
+        }
+
+        String base = s.substring(0, s.length() - existing * step);
+        StringBuilder out = new StringBuilder(base);
+        for (int j = 0; j < count; j++) {
+            out.append(ls);
+        }
+        return out.toString();
     }
 
     private static String b64(String s) {
