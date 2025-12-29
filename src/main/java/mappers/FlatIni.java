@@ -415,10 +415,16 @@ public class FlatIni implements FlatService {
                 }
             }
 
-            flushRawComments(pendingComments);
-            pendingComments.clear();
-
-            renderExtras(seg == null ? null : seg.section, extras);
+            String section = seg == null ? null : seg.section;
+            if (hasSectionPlaceholderExtra(section, extras)) {
+                String originalBlock = joinWithLf(pendingComments);
+                pendingComments.clear();
+                renderExtras(section, extras, originalBlock);
+            } else {
+                flushRawComments(pendingComments);
+                pendingComments.clear();
+                renderExtras(section, extras, null);
+            }
             appendTrailingEmptyLines(trailingEmpty);
         }
 
@@ -485,7 +491,26 @@ public class FlatIni implements FlatService {
             appendCommentBlock(out, newComment, ls);
         }
 
-        private void renderExtras(String section, List<String> extras) {
+
+        private boolean hasSectionPlaceholderExtra(String section, List<String> extras) {
+            if (section == null || extras == null || extras.isEmpty()) {
+                return false;
+            }
+            for (String k : extras) {
+                if (k == null) {
+                    continue;
+                }
+                if (section.equals(k)) {
+                    ParsedKey pk = ParsedKey.parse(k);
+                    if (pk.section == null && pk.host == null) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        private void renderExtras(String section, List<String> extras, String originalBlockForSection) {
             if (extras == null || extras.isEmpty()) {
                 return;
             }
@@ -506,8 +531,10 @@ public class FlatIni implements FlatService {
                         && pk.section == null
                         && pk.host == null;
 
-                if (isSectionPlaceholder && (value == null || value.isEmpty()) && comment != null && !comment.isEmpty()) {
-                    appendCommentBlock(out, comment, ls);
+                if (isSectionPlaceholder && (value == null || value.isEmpty())) {
+                    if (comment != null && !comment.isEmpty()) {
+                        appendCommentBlock(out, comment, ls);
+                    }
                     printedKeys.add(k);
                     continue;
                 }

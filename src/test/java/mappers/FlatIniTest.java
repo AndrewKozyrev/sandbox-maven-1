@@ -20,6 +20,7 @@ class FlatIniTest {
     private static final String INPUT_2 = "src/test/resources/flat_mapper/ini/input_2";
     private static final String INPUT_3 = "src/test/resources/flat_mapper/ini/input_3";
     private static final String INPUT_4 = "src/test/resources/flat_mapper/ini/input_4";
+    private static final String INPUT_5 = "src/test/resources/flat_mapper/ini/input_5";
     private static final String EXPECTED_1 = "src/test/resources/flat_mapper/ini/expected_1";
     private static final String EXPECTED_2 = "src/test/resources/flat_mapper/ini/expected_2";
     private static final String EXPECTED_3 = "src/test/resources/flat_mapper/ini/expected_3";
@@ -34,6 +35,7 @@ class FlatIniTest {
     private static final String EXPECTED_12 = "src/test/resources/flat_mapper/ini/expected_12";
     private static final String EXPECTED_13 = "src/test/resources/flat_mapper/ini/expected_13";
     private static final String EXPECTED_14 = "src/test/resources/flat_mapper/ini/expected_14";
+    private static final String EXPECTED_15 = "src/test/resources/flat_mapper/ini/expected_15";
 
     @Test
     void mapsCorrectly() throws Exception {
@@ -402,11 +404,24 @@ class FlatIniTest {
 
     @Test
     void mappingEmptySectionWithComment() throws Exception {
-        var inputFile = Files.readString(Paths.get(EXPECTED_14));
+        var inputFile = Files.readString(Paths.get(INPUT_5));
         var map = new FlatIni().flatToMap(inputFile);
 
         assertTrue(map.containsKey("nginx_mm"));
         assertEquals("# NEW COMMENT", map.get("nginx_mm").getComment());
         assertEquals("", map.get("nginx_mm").getValue());
+    }
+
+    @Test
+    void editingCommentOfEmptySection() throws Exception {
+        var inputFile = Files.readString(Paths.get(INPUT_5));
+        var map = new FlatIni().flatToMap(inputFile);
+
+        map.get("nginx_mm").setComment("# EDITED COMMENT");
+
+        var actual = new FlatIni().flatToString(map);
+        var expected = Files.readString(Paths.get(EXPECTED_15));
+
+        assertEquals(expected, actual);
     }
 }
