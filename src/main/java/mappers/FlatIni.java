@@ -418,7 +418,7 @@ public class FlatIni implements FlatService {
             flushRawComments(pendingComments);
             pendingComments.clear();
 
-            renderExtras(extras);
+            renderExtras(seg == null ? null : seg.section, extras);
             appendTrailingEmptyLines(trailingEmpty);
         }
 
@@ -485,7 +485,7 @@ public class FlatIni implements FlatService {
             appendCommentBlock(out, newComment, ls);
         }
 
-        private void renderExtras(List<String> extras) {
+        private void renderExtras(String section, List<String> extras) {
             if (extras == null || extras.isEmpty()) {
                 return;
             }
@@ -494,11 +494,27 @@ public class FlatIni implements FlatService {
 
             for (String k : extras) {
                 FileDataItem item = items.get(k);
-                if (item != null && !META_KEY.equals(k)) {
-                    appendCommentBlock(out, item.getComment(), ls);
-                    appendSectionLine(out, ParsedKey.parse(k), safeValue(item), ls);
-                    printedKeys.add(k);
+                if (item == null || META_KEY.equals(k)) {
+                    continue;
                 }
+                ParsedKey pk = ParsedKey.parse(k);
+                String value = safeValue(item);
+                String comment = item.getComment();
+
+                boolean isSectionPlaceholder = section != null
+                        && section.equals(k)
+                        && pk.section == null
+                        && pk.host == null;
+
+                if (isSectionPlaceholder && (value == null || value.isEmpty()) && comment != null && !comment.isEmpty()) {
+                    appendCommentBlock(out, comment, ls);
+                    printedKeys.add(k);
+                    continue;
+                }
+
+                appendCommentBlock(out, comment, ls);
+                appendSectionLine(out, pk, value, ls);
+                printedKeys.add(k);
             }
         }
 
@@ -544,7 +560,8 @@ public class FlatIni implements FlatService {
             String sec = pk.section;
             if (sec == null && pk.host == null && sectionNames.contains(k)) {
                 String v = item == null ? null : item.getValue().toString();
-                if (v == null || v.isEmpty()) {
+                String c = item == null ? null : item.getComment();
+                if ((v == null || v.isEmpty()) && (c == null || c.isEmpty())) {
                     continue;
                 }
                 sec = k;
