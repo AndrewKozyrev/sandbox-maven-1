@@ -559,9 +559,9 @@ public class FlatIni implements FlatService {
             ParsedKey pk = ParsedKey.parse(k);
             String sec = pk.section;
             if (sec == null && pk.host == null && sectionNames.contains(k)) {
-                String v = item == null ? null : item.getValue().toString();
+                Object v = item == null ? null : item.getValue();
                 String c = item == null ? null : item.getComment();
-                if ((v == null || v.isEmpty()) && (c == null || c.isEmpty())) {
+                if ((v == null || (v instanceof String && ((String) v).isEmpty())) && (c == null || c.isEmpty())) {
                     continue;
                 }
                 sec = k;
