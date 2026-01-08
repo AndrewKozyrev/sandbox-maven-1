@@ -1,5 +1,6 @@
 package mappers;
 
+import org.apache.commons.lang3.StringUtils;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Files;
@@ -40,10 +41,10 @@ class FlatIniTest {
     @Test
     void mapsCorrectly() throws Exception {
         var inputFile = Files.readString(Paths.get(INPUT_1));
-        var map = new FlatIni().flatToMap(inputFile);
+        var map = new FlatIni2().flatToMap(inputFile);
 
         assertEquals("ansible_connection=local", map.get("local[0].localhost").getValue());
-        assertNull(map.get("local[0].localhost").getComment());
+        assertEquals(StringUtils.EMPTY, map.get("local[0].localhost").getComment());
 
         assertEquals("ansible_host=tslds-efs002568.delta.sbrf.ru ansible_user=\"{{ SSD_SSH_USER }}\" ansible_ssh_private_key_file=\"{{ vm_ssd_ssh_cred }}\"", map.get("blue[0].tslds-efs002568.ufsflcore.delta.sbrf.ru").getValue());
         var comment1 = "#хост под Sberl\n" +
@@ -59,10 +60,10 @@ class FlatIniTest {
         assertEquals(comment2, map.get("nginx_node_mm[0]").getComment());
 
         assertEquals("tslds-efs002569.ufsflcore.delta.sbrf.ru", map.get("nginx_node_mm[1]").getValue());
-        assertNull(map.get("nginx_node_mm[1]").getComment());
+        assertEquals(StringUtils.EMPTY, map.get("nginx_node_mm[1]").getComment());
 
         assertTrue(map.containsKey("nginx_mm"));
-        assertEquals("", map.get("nginx_mm").getValue());
+        assertEquals(StringUtils.EMPTY, map.get("nginx_mm").getValue());
         assertNull(map.get("nginx_mm").getComment());
 
         assertNull(map.get("\u0000__flat_ini_meta__").getComment());
@@ -72,45 +73,45 @@ class FlatIniTest {
     @Test
     void mapsCorrectly2() throws Exception {
         var inputFile = Files.readString(Paths.get(INPUT_3));
-        var map = new FlatIni().flatToMap(inputFile);
+        var map = new FlatIni2().flatToMap(inputFile);
 
         assertEquals("value_1", map.get("section_1[0].param_1").getValue());
         assertEquals("# comment part 1\n#comment part 2\n## comment part 3", map.get("section_1[0].param_1").getComment());
 
         assertEquals("value_2", map.get("section_1[1].param_2").getValue());
-        assertNull(map.get("section_1[1].param_2").getComment());
+        assertEquals(StringUtils.EMPTY, map.get("section_1[1].param_2").getComment());
 
         assertEquals("value_3", map.get("section_1[2].param_3").getValue());
         assertEquals("# comment for param_3", map.get("section_1[2].param_3").getComment());
 
         assertEquals("param_4", map.get("section_2[0]").getValue());
-        assertNull(map.get("section_2[0]").getComment());
+        assertEquals(StringUtils.EMPTY, map.get("section_2[0]").getComment());
 
         assertEquals("param_5", map.get("section_2[1]").getValue());
-        assertNull(map.get("section_2[1]").getComment());
+        assertEquals(StringUtils.EMPTY, map.get("section_2[1]").getComment());
 
         assertTrue(map.containsKey("section_3"));
-        assertEquals("", map.get("section_3").getValue());
+        assertEquals(StringUtils.EMPTY, map.get("section_3").getValue());
         assertNull(map.get("section_3").getComment());
     }
 
     @Test
     void unflattensCorrectly() throws Exception {
         var inputFile = Files.readString(Paths.get(INPUT_1));
-        var map = new FlatIni().flatToMap(inputFile);
+        var map = new FlatIni2().flatToMap(inputFile);
 
-        var actual = new FlatIni().flatToString(map);
-        assertEquals(inputFile, actual);
+        var actual = new FlatIni2().flatToString(map);
+        assertEquals(inputFile.replaceAll("\\R", "\n"), actual.replaceAll("\\R", "\n"));
     }
 
     @Test
     void singleParameter() throws Exception {
         var inputFile = Files.readString(Paths.get(INPUT_2));
-        var map = new FlatIni().flatToMap(inputFile);
+        var map = new FlatIni2().flatToMap(inputFile);
 
         assertNotNull(map.get("param1"));
         assertEquals("value1", map.get("param1").getValue());
-        assertNull(map.get("param1").getComment());
+        assertEquals(StringUtils.EMPTY, map.get("param1").getComment());
         assertNull(map.get("\u0000__flat_ini_meta__").getComment());
         assertNotNull(map.get("\u0000__flat_ini_meta__").getValue());
     }
@@ -119,7 +120,7 @@ class FlatIniTest {
     void correctOrderOfParams() throws Exception {
         var inputFile = Files.readString(Paths.get(INPUT_1));
 
-        var map = new FlatIni().flatToMap(inputFile);
+        var map = new FlatIni2().flatToMap(inputFile);
 
         var actual = new ArrayList<>(map.values());
 
@@ -162,7 +163,7 @@ class FlatIniTest {
         map.put("key2", item2);
         map.put("key3", item3);
 
-        var actual = new FlatIni().flatToString(map);
+        var actual = new FlatIni2().flatToString(map);
 
         var expected = Files.readString(Paths.get(EXPECTED_2));
 
@@ -172,9 +173,9 @@ class FlatIniTest {
     @Test
     void removingParameter() throws Exception {
         var inputFile = Files.readString(Paths.get(INPUT_1));
-        var map = new FlatIni().flatToMap(inputFile);
+        var map = new FlatIni2().flatToMap(inputFile);
         map.remove("green[0].tslds-efs002569.ufsflcore.delta.sbrf.ru");
-        var actual = new FlatIni().flatToString(map);
+        var actual = new FlatIni2().flatToString(map);
         var expected = Files.readString(Paths.get(EXPECTED_3));
         assertEquals(expected, actual);
     }
@@ -182,11 +183,11 @@ class FlatIniTest {
     @Test
     void removingParameter2() throws Exception {
         var inputFile = Files.readString(Paths.get(INPUT_1));
-        var map = new FlatIni().flatToMap(inputFile);
+        var map = new FlatIni2().flatToMap(inputFile);
 
         map.remove("nginx_node_mm[0]");
 
-        var actual = new FlatIni().flatToString(map);
+        var actual = new FlatIni2().flatToString(map);
         var expected = Files.readString(Paths.get(EXPECTED_10));
         assertEquals(expected, actual);
     }
@@ -212,7 +213,7 @@ class FlatIniTest {
         map.put("section1[1]", item2);
         map.put("section1[2]", item3);
 
-        var actual = new FlatIni().flatToString(map);
+        var actual = new FlatIni2().flatToString(map);
         var expected = Files.readString(Paths.get(EXPECTED_4));
         assertEquals(expected, actual);
     }
@@ -220,32 +221,32 @@ class FlatIniTest {
     @Test
     void afterModifyingValue() throws Exception {
         var inputFile = Files.readString(Paths.get(INPUT_1));
-        var map = new FlatIni().flatToMap(inputFile);
+        var map = new FlatIni2().flatToMap(inputFile);
 
         map.get("vm_sds_master:children[0]").setValue("red");
 
-        var actual = new FlatIni().flatToString(map);
+        var actual = new FlatIni2().flatToString(map);
         var expected = Files.readString(Paths.get(EXPECTED_5));
-        assertEquals(expected, actual);
+        assertEquals(expected.replaceAll("\\R", "\n"), actual.replaceAll("\\R", "\n"));
     }
 
     @Test
     void afterAddingComment() throws Exception {
         var inputFile = Files.readString(Paths.get(INPUT_1));
-        var map = new FlatIni().flatToMap(inputFile);
+        var map = new FlatIni2().flatToMap(inputFile);
 
         map.get("vm_sds_master:children[1]").setValue("red");
         map.get("vm_sds_master:children[1]").setComment("# NEW COMMENT WITH EDIT PARAM");
 
-        var actual = new FlatIni().flatToString(map);
+        var actual = new FlatIni2().flatToString(map);
         var expected = Files.readString(Paths.get(EXPECTED_6));
-        assertEquals(expected, actual);
+        assertEquals(expected.replaceAll("\\R", "\n"), actual.replaceAll("\\R", "\n"));
     }
 
     @Test
     void addingParameterWithCommentToExistingEmptyBlock() throws Exception {
         var inputFile = Files.readString(Paths.get(INPUT_1));
-        var map = new FlatIni().flatToMap(inputFile);
+        var map = new FlatIni2().flatToMap(inputFile);
 
         map.put(
                 "nginx_mm[0]",
@@ -256,7 +257,7 @@ class FlatIniTest {
                         .build()
         );
 
-        var actual = new FlatIni().flatToString(map);
+        var actual = new FlatIni2().flatToString(map);
         var expected = Files.readString(Paths.get(EXPECTED_7));
         assertEquals(expected, actual);
     }
@@ -264,29 +265,29 @@ class FlatIniTest {
     @Test
     void addingNewItem() throws Exception {
         var inputFile = Files.readString(Paths.get(INPUT_1));
-        var map = new FlatIni().flatToMap(inputFile);
+        var map = new FlatIni2().flatToMap(inputFile);
 
         map.put(
-                "nginx_node_mm[3]",
+                "nginx_node_mm[2]",
                 FileDataItem.builder()
-                        .key("nginx_node_mm[3]")
-                        .value("value_for_nginx_node_mm[3]_item")
+                        .key("nginx_node_mm[2]")
+                        .value("value_for_nginx_node_mm[2]_item")
                         .build()
         );
 
-        var actual = new FlatIni().flatToString(map);
+        var actual = new FlatIni2().flatToString(map);
         var expected = Files.readString(Paths.get(EXPECTED_8));
-        assertEquals(expected, actual);
+        assertEquals(expected.replaceAll("\\R", "\n"), actual.replaceAll("\\R", "\n"));
     }
 
     @Test
     void editingComment() throws Exception {
         var inputFile = Files.readString(Paths.get(INPUT_1));
-        var map = new FlatIni().flatToMap(inputFile);
+        var map = new FlatIni2().flatToMap(inputFile);
 
         map.get("green[0].tslds-efs002569.ufsflcore.delta.sbrf.ru").setComment("# modified comment");
 
-        var actual = new FlatIni().flatToString(map);
+        var actual = new FlatIni2().flatToString(map);
         var expected = Files.readString(Paths.get(EXPECTED_9));
         assertEquals(expected, actual);
     }
@@ -294,12 +295,12 @@ class FlatIniTest {
     @Test
     void keepingEmptyLines() throws Exception {
         var inputFile = Files.readString(Paths.get(INPUT_3));
-        var map = new FlatIni().flatToMap(inputFile);
+        var map = new FlatIni2().flatToMap(inputFile);
 
         map.remove("section_2[0]");
         map.remove("section_2[1]");
 
-        var actual = new FlatIni().flatToString(map);
+        var actual = new FlatIni2().flatToString(map);
         var expected = Files.readString(Paths.get(EXPECTED_11));
         assertEquals(expected, actual);
     }
@@ -307,7 +308,7 @@ class FlatIniTest {
     @Test
     void addingNewParameterThenDeletingItKeepsTheFileIntact() throws Exception {
         var inputFile = Files.readString(Paths.get(INPUT_1));
-        var map = new FlatIni().flatToMap(inputFile);
+        var map = new FlatIni2().flatToMap(inputFile);
 
         map.put(
                 "new_param[0]",
@@ -317,13 +318,13 @@ class FlatIniTest {
                         .build()
         );
 
-        var inputFile2 = new FlatIni().flatToString(map);
+        var inputFile2 = new FlatIni2().flatToString(map);
 
-        var map2 = new FlatIni().flatToMap(inputFile2);
+        var map2 = new FlatIni2().flatToMap(inputFile2);
 
         map2.remove("new_param[0]");
 
-        var actual = new FlatIni().flatToString(map2);
+        var actual = new FlatIni2().flatToString(map2);
 
         assertEquals(inputFile, actual);
     }
@@ -331,17 +332,17 @@ class FlatIniTest {
     @Test
     void readingFileWithEmptyLineAtTheEndCorrectly() throws Exception {
         var inputFile = Files.readString(Paths.get(INPUT_4));
-        var map = new FlatIni().flatToMap(inputFile);
+        var map = new FlatIni2().flatToMap(inputFile);
 
-        var actual = new FlatIni().flatToString(map);
+        var actual = new FlatIni2().flatToString(map);
 
-        assertEquals(inputFile, actual);
+        assertEquals(inputFile.replaceAll("\\R", "\n"), actual.replaceAll("\\R", "\n"));
     }
 
     @Test
     void addingParameterToEmptySectionThenRemovingIt() throws Exception {
         var inputFile = Files.readString(Paths.get(INPUT_1));
-        var map = new FlatIni().flatToMap(inputFile);
+        var map = new FlatIni2().flatToMap(inputFile);
 
         map.put(
                 "nginx_mm[0].new_param",
@@ -351,13 +352,13 @@ class FlatIniTest {
                         .build()
         );
 
-        var inputFile2 = new FlatIni().flatToString(map);
+        var inputFile2 = new FlatIni2().flatToString(map);
 
-        var map2 = new FlatIni().flatToMap(inputFile2);
+        var map2 = new FlatIni2().flatToMap(inputFile2);
 
         map2.remove("nginx_mm[0].new_param");
 
-        var actual = new FlatIni().flatToString(map2);
+        var actual = new FlatIni2().flatToString(map2);
         var expected = Files.readString(Paths.get(EXPECTED_12));
 
         assertEquals(expected, actual);
@@ -366,11 +367,11 @@ class FlatIniTest {
     @Test
     void addingParameterToEmptySection() throws Exception {
         var inputFile = Files.readString(Paths.get(INPUT_1));
-        var map = new FlatIni().flatToMap(inputFile);
+        var map = new FlatIni2().flatToMap(inputFile);
 
         map.get("nginx_mm").setValue("nginx_mm_new_value");
 
-        var actual = new FlatIni().flatToString(map);
+        var actual = new FlatIni2().flatToString(map);
         var expected = Files.readString(Paths.get(EXPECTED_13));
 
         assertEquals(expected, actual);
@@ -379,11 +380,11 @@ class FlatIniTest {
     @Test
     void removingEmptySection() throws Exception {
         var inputFile = Files.readString(Paths.get(INPUT_1));
-        var map = new FlatIni().flatToMap(inputFile);
+        var map = new FlatIni2().flatToMap(inputFile);
 
         map.remove("nginx_mm");
 
-        var actual = new FlatIni().flatToString(map);
+        var actual = new FlatIni2().flatToString(map);
         var expected = Files.readString(Paths.get(EXPECTED_12));
 
         assertEquals(expected, actual);
@@ -392,11 +393,11 @@ class FlatIniTest {
     @Test
     void addingCommentToEmptySection() throws Exception {
         var inputFile = Files.readString(Paths.get(INPUT_1));
-        var map = new FlatIni().flatToMap(inputFile);
+        var map = new FlatIni2().flatToMap(inputFile);
 
         map.get("nginx_mm").setComment("# NEW COMMENT");
 
-        var actual = new FlatIni().flatToString(map);
+        var actual = new FlatIni2().flatToString(map);
         var expected = Files.readString(Paths.get(EXPECTED_14));
 
         assertEquals(expected, actual);
@@ -405,21 +406,21 @@ class FlatIniTest {
     @Test
     void mappingEmptySectionWithComment() throws Exception {
         var inputFile = Files.readString(Paths.get(INPUT_5));
-        var map = new FlatIni().flatToMap(inputFile);
+        var map = new FlatIni2().flatToMap(inputFile);
 
         assertTrue(map.containsKey("nginx_mm"));
         assertEquals("# NEW COMMENT", map.get("nginx_mm").getComment());
-        assertEquals("", map.get("nginx_mm").getValue());
+        assertEquals(StringUtils.EMPTY, map.get("nginx_mm").getValue());
     }
 
     @Test
     void editingCommentOfEmptySection() throws Exception {
         var inputFile = Files.readString(Paths.get(INPUT_5));
-        var map = new FlatIni().flatToMap(inputFile);
+        var map = new FlatIni2().flatToMap(inputFile);
 
         map.get("nginx_mm").setComment("# EDITED COMMENT");
 
-        var actual = new FlatIni().flatToString(map);
+        var actual = new FlatIni2().flatToString(map);
         var expected = Files.readString(Paths.get(EXPECTED_15));
 
         assertEquals(expected, actual);

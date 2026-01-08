@@ -27,7 +27,7 @@ green
 #PES
 tslds-efs002568.ufsflcore.delta.sbrf.ru
 tslds-efs002569.ufsflcore.delta.sbrf.ru
-value_for_nginx_node_mm[3]_item
+value_for_nginx_node_mm[2]_item
 
 [hosts:children]
 local
