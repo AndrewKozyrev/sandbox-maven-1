@@ -92,11 +92,13 @@ public class FlatIni2 implements FlatService {
                 parameter.value = StringUtils.EMPTY;
                 parameter.separator = StringUtils.EMPTY;
                 parameter.type = ParameterType.EMPTY;
+                parameter.position = -1;
+                innerMap.put(Integer.MAX_VALUE, parameter);
             } else {
                 parameter = new Parameter(parameterLine, paramComment, index + 1);
                 parameter.type = ParameterType.REGULAR;
+                innerMap.put(index, parameter);
             }
-            innerMap.put(index, parameter);
         }
         List<Element> result = new ArrayList<>();
         for (String section : map.keySet()) {
@@ -258,6 +260,7 @@ public class FlatIni2 implements FlatService {
                 } else {
                     param.type = ParameterType.END;
                 }
+                param.position = -1;
                 params.add(param);
             }
             for (int i = 0; i < params.size(); i++) {
