@@ -3,7 +3,15 @@ package mappers;
 import lombok.NoArgsConstructor;
 import org.apache.commons.lang3.StringUtils;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.StringJoiner;
+import java.util.TreeMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -14,6 +22,7 @@ public class FlatIni implements FlatService {
     private static final String SECTION_PATTERN = "^\\s*\\[([^\\[\\]]+)]\\s*$";
     private static final String COMMENT_PATTERN = "\\s*#.*$";
     private static final String VALUE_PATTERN = "([^\\s]*)(\\s*)(.*)";
+    private static final String KEY_PATTERN = "([^\\[]+)(?:\\[(\\d+)])?\\.?(.+)?";
     private static final String META_KEY = "\u0000__flat_ini_meta__";
 
     @Override
@@ -66,14 +75,14 @@ public class FlatIni implements FlatService {
     }
 
     private List<Element> convert(Map<String, FileDataItem> data) {
-        Pattern sectionPattern = Pattern.compile("^(?![^\\[]*\\.[^\\[]*$)(?!.*\\[(?!\\d+]))([^.\\[]+)(?:\\[(\\d+)])?(?:\\.(.*))?$");
+        Pattern keyPattern = Pattern.compile(KEY_PATTERN);
         Map<String, TreeMap<Integer, Parameter>> map = new LinkedHashMap<>();
         for (Map.Entry<String, FileDataItem> entry : data.entrySet()) {
             String key = entry.getKey();
             if (META_KEY.equals(key)) {
                 continue;
             }
-            Matcher matcher = sectionPattern.matcher(key);
+            Matcher matcher = keyPattern.matcher(key);
             matcher.find();
             String section = matcher.group(1);
             int index = matcher.group(2) == null ? -1 : Integer.parseInt(matcher.group(2));
@@ -101,10 +110,10 @@ public class FlatIni implements FlatService {
             }
         }
         List<Element> result = new ArrayList<>();
-        for (String section : map.keySet()) {
+        for (Map.Entry<String, TreeMap<Integer, Parameter>> entry : map.entrySet()) {
             Element element = new Element();
-            element.section = section;
-            Collection<Parameter> parameters = map.get(section).values();
+            element.section = entry.getKey();
+            Collection<Parameter> parameters = entry.getValue().values();
             element.params.addAll(parameters);
             result.add(element);
         }
@@ -113,7 +122,7 @@ public class FlatIni implements FlatService {
 
     private List<Element> merge(List<Element> fromMeta, List<Element> fromData) {
         List<Element> result = new ArrayList<>();
-        if (fromMeta != null) {
+        if (!fromMeta.isEmpty()) {
             fromMeta.removeIf(element -> fromData.stream().noneMatch(x -> x.section.equals(element.section)));
             for (Element metaElement : fromMeta) {
                 Element dataElement = fromData.stream()
@@ -204,7 +213,7 @@ public class FlatIni implements FlatService {
 
     private List<Element> extractMeta(Map<String, FileDataItem> data) {
         if (!data.containsKey(META_KEY)) {
-            return null;
+            return Collections.emptyList();
         }
         List<?> list = (List<?>) data.get(META_KEY).getValue();
         return list.stream()
