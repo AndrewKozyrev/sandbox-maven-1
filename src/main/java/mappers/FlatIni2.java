@@ -1,7 +1,6 @@
 package mappers;
 
-import lombok.Data;
-import org.apache.commons.lang3.NotImplementedException;
+import lombok.NoArgsConstructor;
 import org.apache.commons.lang3.StringUtils;
 
 import java.util.*;
@@ -31,6 +30,8 @@ public class FlatIni2 implements FlatService {
                 element.addComment(line);
             } else if (isParameter(line)) {
                 element.addParam(line);
+            } else {
+                element.addComment(line);
             }
             if (!elements.contains(element)) {
                 elements.add(element);
@@ -69,21 +70,38 @@ public class FlatIni2 implements FlatService {
         Map<String, TreeMap<Integer, Parameter>> map = new LinkedHashMap<>();
         for (Map.Entry<String, FileDataItem> entry : data.entrySet()) {
             String key = entry.getKey();
+            if (META_KEY.equals(key)) {
+                continue;
+            }
             Matcher matcher = sectionPattern.matcher(key);
             matcher.find();
             String section = matcher.group(1);
             int index = matcher.group(2) == null ? -1 : Integer.parseInt(matcher.group(2));
-            String paramKey = matcher.group(3) == null ? StringUtils.EMPTY : matcher.group(3);
-            String paramValue = entry.getValue().getValue().toString();
+            String paramKey = matcher.group(3);
+            String paramValue = Optional.ofNullable(entry.getValue().getValue())
+                    .map(Object::toString)
+                    .orElse("");
             String paramComment = entry.getValue().getComment();
-            map.computeIfAbsent(section, k -> new TreeMap<>())
-                    .put(index, new Parameter(paramKey + " " + paramValue, paramComment));
+            TreeMap<Integer, Parameter> innerMap = map.computeIfAbsent(section, k -> new TreeMap<>());
+            String parameterLine = paramKey == null ? paramValue : paramKey + " " + paramValue;
+            Parameter parameter;
+            if (index == -1 && StringUtils.isEmpty(parameterLine)) {
+                parameter = new Parameter();
+                parameter.comment = paramComment;
+                parameter.key = StringUtils.EMPTY;
+                parameter.value = StringUtils.EMPTY;
+                parameter.separator = StringUtils.EMPTY;
+                parameter.type = ParameterType.EMPTY;
+            } else {
+                parameter = new Parameter(parameterLine, paramComment, index + 1);
+                parameter.type = ParameterType.REGULAR;
+            }
+            innerMap.put(index, parameter);
         }
         List<Element> result = new ArrayList<>();
         for (String section : map.keySet()) {
             Element element = new Element();
             element.section = section;
-            element.type = ElementType.SECTION;
             Collection<Parameter> parameters = map.get(section).values();
             element.params.addAll(parameters);
             result.add(element);
@@ -92,53 +110,71 @@ public class FlatIni2 implements FlatService {
     }
 
     private List<Element> merge(List<Element> fromMeta, List<Element> fromData) {
-        fromMeta.removeIf(element -> fromData.stream().noneMatch(x -> x.section.equals(element.section)));
         List<Element> result = new ArrayList<>();
-        for (Element metaElement : fromMeta) {
-            Element dataElement = fromData.stream()
-                    .filter(x -> x.section.equals(metaElement.section))
-                    .findFirst()
-                    .orElseThrow();
-            Element element = synchronize(metaElement, dataElement);
-            result.add(element);
+        if (fromMeta != null) {
+            fromMeta.removeIf(element -> fromData.stream().noneMatch(x -> x.section.equals(element.section)));
+            for (Element metaElement : fromMeta) {
+                Element dataElement = fromData.stream()
+                        .filter(x -> x.section.equals(metaElement.section))
+                        .findFirst()
+                        .orElseThrow();
+                Element element = synchronize(metaElement, dataElement);
+                result.add(element);
+            }
+        } else {
+            result.addAll(fromData);
         }
+
         return result;
     }
 
     private Element synchronize(Element metaElement, Element dataElement) {
         Element result = new Element();
-        result.comment = metaElement.comment;
+        result.sectionComment = metaElement.sectionComment;
         for (Parameter dataParam : dataElement.params) {
-            Parameter metaParam = metaElement.params.stream()
-                    .filter(x -> x.key.equals(dataParam.key))
-                    .findFirst()
-                    .orElse(null);
-            if (metaParam != null) {
-                Parameter resultParam = new Parameter(dataParam.key + metaParam.separator + dataParam.value, dataParam.comment);
+            if (dataParam.type == ParameterType.REGULAR) {
+                Parameter metaParam = metaElement.params.stream()
+                        .filter(x -> x.type == dataParam.type)
+                        .filter(x -> x.key.equals(dataParam.key) && x.position == dataParam.position)
+                        .findFirst()
+                        .orElse(null);
+                Parameter resultParam;
+                if (metaParam != null) {
+                    resultParam = new Parameter(dataParam.key + metaParam.separator + dataParam.value, dataParam.comment, dataParam.position);
+                } else {
+                    resultParam = new Parameter(dataParam.key + " " + dataParam.value, dataParam.comment, dataParam.position);
+                }
+                resultParam.type = ParameterType.REGULAR;
                 result.params.add(resultParam);
+            } else {
+                metaElement.params.stream()
+                        .filter(x -> x.type != ParameterType.REGULAR)
+                        .filter(x -> x.position == dataParam.position)
+                        .findFirst()
+                        .map(x -> x.type)
+                        .ifPresent(type -> dataParam.type = type);
+                result.params.add(dataParam);
             }
+            result.paramCount++;
         }
         result.section = dataElement.section;
-        result.type = metaElement.type;
         return result;
     }
 
     private String deserialize(List<Element> elements) {
         StringJoiner result = new StringJoiner(LINE_SEPARATOR);
         for (Element element : elements) {
-            if (element.type == ElementType.SECTION) {
-                result.add("[" + element.section + "]");
-                for (Parameter param : element.params) {
-                    if (StringUtils.isNotEmpty(param.comment)) {
-                        result.add(param.comment);
-                    }
+            result.add("[" + element.section + "]");
+            for (Parameter param : element.params) {
+                if (StringUtils.isNotEmpty(param.comment)) {
+                    result.add(param.comment);
+                }
+                if (param.type != ParameterType.END) {
                     result.add(param.key + param.separator + param.value);
                 }
-                if (element.comment != null) {
-                    result.add(element.comment.toString());
-                }
-            } else {
-                throw new NotImplementedException("NOT A SECTION");
+            }
+            if (element.sectionComment != null) {
+                result.add(element.sectionComment.toString());
             }
         }
 
@@ -150,11 +186,11 @@ public class FlatIni2 implements FlatService {
     }
 
     private boolean isComment(String line) {
-        return line.matches(COMMENT_PATTERN) || line.isEmpty();
+        return line.matches(COMMENT_PATTERN);
     }
 
     private boolean isParameter(String line) {
-        return !isSection(line) && !isComment(line);
+        return StringUtils.isNotEmpty(line) && !isSection(line) && !isComment(line);
     }
 
     private FileDataItem createMeta(List<Element> elements) {
@@ -176,16 +212,14 @@ public class FlatIni2 implements FlatService {
 
     private static class Element {
 
-
         private String section;
-        private StringJoiner comment;
-        private List<Parameter> params;
-        private ElementType type;
+        private StringJoiner sectionComment;
+        private final List<Parameter> params;
+        private int paramCount;
 
         public Element() {
-            this.comment = new StringJoiner(LINE_SEPARATOR);
             params = new ArrayList<>();
-            type = ElementType.SINGLE;
+            paramCount = 0;
         }
 
         public void addSection(String line) {
@@ -195,53 +229,49 @@ public class FlatIni2 implements FlatService {
                 throw new IllegalStateException("Не удалось извлечь секцию из строки.");
             }
             this.section = matcher.group(1);
-            type = ElementType.SECTION;
         }
 
         public void addComment(String line) {
-            if (comment == null) {
-                comment = new StringJoiner(LINE_SEPARATOR);
+            if (sectionComment == null) {
+                sectionComment = new StringJoiner(LINE_SEPARATOR);
             }
-            if (line.isEmpty()) {
-                this.comment.add(StringUtils.EMPTY);
-                return;
-            }
-            Pattern pattern = Pattern.compile(COMMENT_PATTERN);
-            Matcher matcher = pattern.matcher(line);
-            if (!matcher.find()) {
-                throw new IllegalStateException("Не удалось извлечь комментарий из строки.");
-            }
-            String comment = matcher.group();
-            this.comment.add(comment);
+            sectionComment.add(line);
         }
 
         public void addParam(String line) {
-            String comment = this.comment != null ? this.comment.toString() : StringUtils.EMPTY;
-            params.add(new Parameter(line, comment));
-            this.comment = null;
+            paramCount++;
+            String paramComment;
+            paramComment = sectionComment == null ? StringUtils.EMPTY : sectionComment.toString();
+            params.add(new Parameter(line, paramComment, paramCount));
+            sectionComment = null;
         }
 
         public List<FileDataItem> toFileDataItems() {
-            if (params.isEmpty()) {
-                FileDataItem item = FileDataItem.builder()
-                        .key(section)
-                        .value(StringUtils.EMPTY)
-                        .build();
-                return List.of(item);
-            }
             List<FileDataItem> items = new ArrayList<>();
+            if (paramCount == 0) {
+                Parameter param = new Parameter();
+                if (sectionComment != null) {
+                    param.type = ParameterType.EMPTY;
+                    param.comment = sectionComment.toString();
+                    param.value = StringUtils.EMPTY;
+                    sectionComment = null;
+                } else {
+                    param.type = ParameterType.END;
+                }
+                params.add(param);
+            }
             for (int i = 0; i < params.size(); i++) {
                 Parameter param = params.get(i);
                 String key;
-                if (StringUtils.isEmpty(section)) {
-                    key = param.getKey();
+                if (param.type == ParameterType.REGULAR) {
+                    key = section + "[" + i + "]" + (StringUtils.isNotEmpty(param.key) ? "." + param.key : StringUtils.EMPTY);
                 } else {
-                    key = section + "[" + i + "]" + (StringUtils.isNotEmpty(param.key) ? "." + param.getKey() : StringUtils.EMPTY);
+                    key = section;
                 }
                 FileDataItem item = FileDataItem.builder()
                         .key(key)
-                        .value(param.getValue())
-                        .comment(param.getComment())
+                        .value(param.value)
+                        .comment(param.comment)
                         .build();
                 items.add(item);
             }
@@ -249,14 +279,16 @@ public class FlatIni2 implements FlatService {
         }
     }
 
-    @Data
+    @NoArgsConstructor
     private static class Parameter {
+        private ParameterType type;
         private String key;
         private String separator;
         private String value;
         private String comment;
+        private int position;
 
-        public Parameter(String line, String comment) {
+        public Parameter(String line, String comment, int position) {
             line = line.trim();
             Pattern pattern = Pattern.compile(VALUE_PATTERN);
             Matcher matcher = pattern.matcher(line);
@@ -271,11 +303,14 @@ public class FlatIni2 implements FlatService {
                 key = StringUtils.EMPTY;
             }
             this.comment = comment;
+            this.position = position;
+            type = ParameterType.REGULAR;
         }
     }
 
-    private enum ElementType {
-        SECTION,
-        SINGLE
+    private enum ParameterType {
+        REGULAR,
+        EMPTY,
+        END
     }
 }

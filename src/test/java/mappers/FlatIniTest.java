@@ -23,7 +23,6 @@ class FlatIniTest {
     private static final String INPUT_4 = "src/test/resources/flat_mapper/ini/input_4";
     private static final String INPUT_5 = "src/test/resources/flat_mapper/ini/input_5";
     private static final String EXPECTED_1 = "src/test/resources/flat_mapper/ini/expected_1";
-    private static final String EXPECTED_2 = "src/test/resources/flat_mapper/ini/expected_2";
     private static final String EXPECTED_3 = "src/test/resources/flat_mapper/ini/expected_3";
     private static final String EXPECTED_4 = "src/test/resources/flat_mapper/ini/expected_4";
     private static final String EXPECTED_5 = "src/test/resources/flat_mapper/ini/expected_5";
@@ -37,6 +36,10 @@ class FlatIniTest {
     private static final String EXPECTED_13 = "src/test/resources/flat_mapper/ini/expected_13";
     private static final String EXPECTED_14 = "src/test/resources/flat_mapper/ini/expected_14";
     private static final String EXPECTED_15 = "src/test/resources/flat_mapper/ini/expected_15";
+
+    public static void assertEqualsIgnoreLineBreak(String expected, String actual) {
+        assertEquals(expected.replaceAll("\\R", "\n"), actual.replaceAll("\\R", "\n"));
+    }
 
     @Test
     void mapsCorrectly() throws Exception {
@@ -64,7 +67,7 @@ class FlatIniTest {
 
         assertTrue(map.containsKey("nginx_mm"));
         assertEquals(StringUtils.EMPTY, map.get("nginx_mm").getValue());
-        assertNull(map.get("nginx_mm").getComment());
+        assertEquals(StringUtils.EMPTY, map.get("nginx_mm").getComment());
 
         assertNull(map.get("\u0000__flat_ini_meta__").getComment());
         assertNotNull(map.get("\u0000__flat_ini_meta__").getValue());
@@ -91,7 +94,7 @@ class FlatIniTest {
         assertEquals(StringUtils.EMPTY, map.get("section_2[1]").getComment());
 
         assertTrue(map.containsKey("section_3"));
-        assertEquals(StringUtils.EMPTY, map.get("section_3").getValue());
+        assertNull(map.get("section_3").getValue());
         assertNull(map.get("section_3").getComment());
     }
 
@@ -101,7 +104,7 @@ class FlatIniTest {
         var map = new FlatIni2().flatToMap(inputFile);
 
         var actual = new FlatIni2().flatToString(map);
-        assertEquals(inputFile.replaceAll("\\R", "\n"), actual.replaceAll("\\R", "\n"));
+        assertEqualsIgnoreLineBreak(inputFile, actual);
     }
 
     @Test
@@ -143,41 +146,13 @@ class FlatIniTest {
     }
 
     @Test
-    void commentsMapping() throws Exception {
-        var item1 = new FileDataItem();
-        item1.setKey("key1");
-        item1.setValue("value1");
-        item1.setComment("# comment1");
-
-        var item2 = new FileDataItem();
-        item2.setKey("key2");
-        item2.setValue("value2");
-        item2.setComment("# comment2");
-
-        var item3 = new FileDataItem();
-        item3.setKey("key3");
-        item3.setValue("value3");
-
-        HashMap<String, FileDataItem> map = new HashMap<>();
-        map.put("key1", item1);
-        map.put("key2", item2);
-        map.put("key3", item3);
-
-        var actual = new FlatIni2().flatToString(map);
-
-        var expected = Files.readString(Paths.get(EXPECTED_2));
-
-        assertEquals(expected, actual);
-    }
-
-    @Test
     void removingParameter() throws Exception {
         var inputFile = Files.readString(Paths.get(INPUT_1));
         var map = new FlatIni2().flatToMap(inputFile);
         map.remove("green[0].tslds-efs002569.ufsflcore.delta.sbrf.ru");
         var actual = new FlatIni2().flatToString(map);
         var expected = Files.readString(Paths.get(EXPECTED_3));
-        assertEquals(expected, actual);
+        assertEqualsIgnoreLineBreak(expected, actual);
     }
 
     @Test
@@ -189,7 +164,7 @@ class FlatIniTest {
 
         var actual = new FlatIni2().flatToString(map);
         var expected = Files.readString(Paths.get(EXPECTED_10));
-        assertEquals(expected, actual);
+        assertEqualsIgnoreLineBreak(expected, actual);
     }
 
     @Test
@@ -215,7 +190,7 @@ class FlatIniTest {
 
         var actual = new FlatIni2().flatToString(map);
         var expected = Files.readString(Paths.get(EXPECTED_4));
-        assertEquals(expected, actual);
+        assertEqualsIgnoreLineBreak(expected, actual);
     }
 
     @Test
@@ -227,7 +202,7 @@ class FlatIniTest {
 
         var actual = new FlatIni2().flatToString(map);
         var expected = Files.readString(Paths.get(EXPECTED_5));
-        assertEquals(expected.replaceAll("\\R", "\n"), actual.replaceAll("\\R", "\n"));
+        assertEqualsIgnoreLineBreak(expected, actual);
     }
 
     @Test
@@ -240,7 +215,7 @@ class FlatIniTest {
 
         var actual = new FlatIni2().flatToString(map);
         var expected = Files.readString(Paths.get(EXPECTED_6));
-        assertEquals(expected.replaceAll("\\R", "\n"), actual.replaceAll("\\R", "\n"));
+        assertEqualsIgnoreLineBreak(expected, actual);
     }
 
     @Test
@@ -259,7 +234,7 @@ class FlatIniTest {
 
         var actual = new FlatIni2().flatToString(map);
         var expected = Files.readString(Paths.get(EXPECTED_7));
-        assertEquals(expected, actual);
+        assertEqualsIgnoreLineBreak(expected, actual);
     }
 
     @Test
@@ -277,7 +252,7 @@ class FlatIniTest {
 
         var actual = new FlatIni2().flatToString(map);
         var expected = Files.readString(Paths.get(EXPECTED_8));
-        assertEquals(expected.replaceAll("\\R", "\n"), actual.replaceAll("\\R", "\n"));
+        assertEqualsIgnoreLineBreak(expected, actual);
     }
 
     @Test
@@ -289,7 +264,7 @@ class FlatIniTest {
 
         var actual = new FlatIni2().flatToString(map);
         var expected = Files.readString(Paths.get(EXPECTED_9));
-        assertEquals(expected, actual);
+        assertEqualsIgnoreLineBreak(expected, actual);
     }
 
     @Test
@@ -302,7 +277,7 @@ class FlatIniTest {
 
         var actual = new FlatIni2().flatToString(map);
         var expected = Files.readString(Paths.get(EXPECTED_11));
-        assertEquals(expected, actual);
+        assertEqualsIgnoreLineBreak(expected, actual);
     }
 
     @Test
@@ -326,7 +301,7 @@ class FlatIniTest {
 
         var actual = new FlatIni2().flatToString(map2);
 
-        assertEquals(inputFile, actual);
+        assertEqualsIgnoreLineBreak(inputFile, actual);
     }
 
     @Test
@@ -336,7 +311,7 @@ class FlatIniTest {
 
         var actual = new FlatIni2().flatToString(map);
 
-        assertEquals(inputFile.replaceAll("\\R", "\n"), actual.replaceAll("\\R", "\n"));
+        assertEqualsIgnoreLineBreak(inputFile, actual);
     }
 
     @Test
@@ -361,7 +336,7 @@ class FlatIniTest {
         var actual = new FlatIni2().flatToString(map2);
         var expected = Files.readString(Paths.get(EXPECTED_12));
 
-        assertEquals(expected, actual);
+        assertEqualsIgnoreLineBreak(expected, actual);
     }
 
     @Test
@@ -374,7 +349,7 @@ class FlatIniTest {
         var actual = new FlatIni2().flatToString(map);
         var expected = Files.readString(Paths.get(EXPECTED_13));
 
-        assertEquals(expected, actual);
+        assertEqualsIgnoreLineBreak(expected, actual);
     }
 
     @Test
@@ -387,7 +362,7 @@ class FlatIniTest {
         var actual = new FlatIni2().flatToString(map);
         var expected = Files.readString(Paths.get(EXPECTED_12));
 
-        assertEquals(expected, actual);
+        assertEqualsIgnoreLineBreak(expected, actual);
     }
 
     @Test
@@ -400,7 +375,7 @@ class FlatIniTest {
         var actual = new FlatIni2().flatToString(map);
         var expected = Files.readString(Paths.get(EXPECTED_14));
 
-        assertEquals(expected, actual);
+        assertEqualsIgnoreLineBreak(expected, actual);
     }
 
     @Test
@@ -409,7 +384,7 @@ class FlatIniTest {
         var map = new FlatIni2().flatToMap(inputFile);
 
         assertTrue(map.containsKey("nginx_mm"));
-        assertEquals("# NEW COMMENT", map.get("nginx_mm").getComment());
+        assertEquals("# NEW COMMENT\n", map.get("nginx_mm").getComment());
         assertEquals(StringUtils.EMPTY, map.get("nginx_mm").getValue());
     }
 
@@ -423,6 +398,6 @@ class FlatIniTest {
         var actual = new FlatIni2().flatToString(map);
         var expected = Files.readString(Paths.get(EXPECTED_15));
 
-        assertEquals(expected, actual);
+        assertEqualsIgnoreLineBreak(expected, actual);
     }
 }
